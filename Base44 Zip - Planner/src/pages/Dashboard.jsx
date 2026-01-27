@@ -1,19 +1,18 @@
+// src/pages/Dashboard.jsx
 import React, { useState, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
-import { base44 } from '@/api/base44Client';
+import { supabase } from '@/api/supabaseClient';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/components/auth/AuthProvider';
-import { format, isToday, isTomorrow, isThisWeek, parseISO, startOfWeek, endOfWeek } from 'date-fns';
+import { format, isToday, isTomorrow, parseISO, startOfWeek, endOfWeek } from 'date-fns';
 import { 
   Calendar, 
   Plus, 
   ArrowRight,
   Clock,
   CheckCircle2,
-  AlertCircle,
-  TrendingUp,
-  Filter
+  AlertCircle
 } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -35,24 +34,54 @@ export default function Dashboard() {
 
   const { data: workspaces = [], isLoading: loadingWorkspaces } = useQuery({
     queryKey: ['workspaces'],
-    queryFn: () => base44.entities.Workspace.list()
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('workspaces')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      return data ?? [];
+    }
   });
 
   const { data: allAccounts = [], isLoading: loadingAccounts } = useQuery({
     queryKey: ['accounts'],
-    queryFn: () => base44.entities.SocialAccount.list()
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('social_accounts')
+        .select('*');
+
+      if (error) throw error;
+      return data ?? [];
+    }
   });
 
   const { data: allPosts = [], isLoading: loadingPosts } = useQuery({
     queryKey: ['posts'],
-    queryFn: () => base44.entities.Post.list('-scheduled_date')
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('posts')
+        .select('*')
+        .order('scheduled_date', { ascending: false });
+
+      if (error) throw error;
+      return data ?? [];
+    }
   });
 
-  // Filter accounts based on role
+  // Filter accounts based on role (keeping your existing logic)
   const accounts = useMemo(() => {
     if (isAdmin()) return allAccounts;
-    return allAccounts.filter(acc => 
-      acc.assigned_manager_email === user?.email || 
+
+    // Prefer assignedAccounts from auth if it exists (future-proof)
+    if (Array.isArray(assignedAccounts) && assignedAccounts.length > 0) {
+      return assignedAccounts;
+    }
+
+    // Fallback to your old Base44-style account assignment fields
+    return allAccounts.filter(acc =>
+      acc.assigned_manager_email === user?.email ||
       acc.collaborator_emails?.includes(user?.email)
     );
   }, [allAccounts, isAdmin, user, assignedAccounts]);
@@ -61,14 +90,14 @@ export default function Dashboard() {
   const posts = useMemo(() => {
     const accountIds = accounts.map(a => a.id);
     let filtered = allPosts.filter(p => accountIds.includes(p.social_account_id));
-    
+
     if (selectedWorkspace !== 'all') {
       filtered = filtered.filter(p => p.workspace_id === selectedWorkspace);
     }
     if (selectedPlatform !== 'all') {
       filtered = filtered.filter(p => p.platform === selectedPlatform);
     }
-    
+
     return filtered;
   }, [allPosts, accounts, selectedWorkspace, selectedPlatform]);
 
@@ -77,7 +106,7 @@ export default function Dashboard() {
     const now = new Date();
     const weekStart = startOfWeek(now);
     const weekEnd = endOfWeek(now);
-    
+
     return {
       total: posts.length,
       draft: posts.filter(p => p.status === 'draft').length,
@@ -400,10 +429,10 @@ export default function Dashboard() {
                 <div className="space-y-2">
                   {accounts.slice(0, 6).map(account => {
                     const accountPosts = posts.filter(p => p.social_account_id === account.id);
-                    const pendingCount = accountPosts.filter(p => 
+                    const pendingCount = accountPosts.filter(p =>
                       p.status !== 'posted' && p.status !== 'draft'
                     ).length;
-                    
+
                     return (
                       <div 
                         key={account.id}
