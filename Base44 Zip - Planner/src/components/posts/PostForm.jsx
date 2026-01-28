@@ -1,21 +1,20 @@
+// src/components/posts/PostForm.jsx
 import React, { useState, useEffect } from 'react';
-import { base44 } from '@/api/base44Client';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { supabase } from '@/api/supabaseClient';
+import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/components/auth/AuthProvider';
-import { format, parseISO } from 'date-fns';
-import { 
-  Upload, 
-  X, 
-  Copy, 
-  Download, 
+import { format } from 'date-fns';
+import {
+  Upload,
+  X,
+  Copy,
+  Download,
   Check,
   Image,
   Video,
   Calendar,
   Clock,
   Hash,
-  MessageSquare,
-  FileText,
   Eye,
   EyeOff,
   Loader2,
@@ -25,28 +24,29 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { 
-  Select, 
-  SelectContent, 
-  SelectItem, 
-  SelectTrigger, 
-  SelectValue 
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import PlatformIcon from '@/components/ui/PlatformIcon';
 import StatusBadge, { statusConfig } from '@/components/ui/StatusBadge';
 
-export default function PostForm({ 
-  post, 
-  onSave, 
+const STORAGE_BUCKET = 'post-assets'; // <-- change if your bucket name is different
+
+export default function PostForm({
+  post,
+  onSave,
   onDelete,
   initialDate,
-  isLoading 
+  isLoading
 }) {
-  const { user, isAdmin, isClient } = useAuth();
-  const queryClient = useQueryClient();
-  
+  const { user, isAdmin, isClient, assignedAccounts } = useAuth();
+
   const [formData, setFormData] = useState({
     social_account_id: '',
     workspace_id: '',
@@ -63,28 +63,49 @@ export default function PostForm({
     asset_types: [],
     order_index: 0
   });
-  
+
   const [uploading, setUploading] = useState(false);
   const [copied, setCopied] = useState(null);
 
   const { data: allAccounts = [] } = useQuery({
     queryKey: ['accounts'],
-    queryFn: () => base44.entities.SocialAccount.list()
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('social_accounts')
+        .select('*');
+
+      if (error) throw error;
+      return data ?? [];
+    }
   });
 
   const { data: workspaces = [] } = useQuery({
     queryKey: ['workspaces'],
-    queryFn: () => base44.entities.Workspace.list()
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('workspaces')
+        .select('*');
+
+      if (error) throw error;
+      return data ?? [];
+    }
   });
 
-  // Filter accounts based on role
+  // Filter accounts based on role (keeps your existing behavior)
   const accounts = React.useMemo(() => {
     if (isAdmin()) return allAccounts;
-    return allAccounts.filter(acc => 
-      acc.assigned_manager_email === user?.email || 
+
+    // Prefer auth-provided accounts if present
+    if (Array.isArray(assignedAccounts) && assignedAccounts.length > 0) {
+      return assignedAccounts;
+    }
+
+    // Fallback to legacy fields
+    return allAccounts.filter(acc =>
+      acc.assigned_manager_email === user?.email ||
       acc.collaborator_emails?.includes(user?.email)
     );
-  }, [allAccounts, isAdmin, user]);
+  }, [allAccounts, isAdmin, user, assignedAccounts]);
 
   // Initialize form with post data
   useEffect(() => {
@@ -105,8 +126,14 @@ export default function PostForm({
         asset_types: post.asset_types || [],
         order_index: post.order_index || 0
       });
+    } else {
+      // if creating new post, keep initialDate
+      setFormData(prev => ({
+        ...prev,
+        scheduled_date: initialDate || prev.scheduled_date || ''
+      }));
     }
-  }, [post]);
+  }, [post, initialDate]);
 
   // Update workspace and platform when account changes
   const handleAccountChange = (accountId) => {
@@ -118,34 +145,84 @@ export default function PostForm({
         workspace_id: account.workspace_id,
         platform: account.platform
       }));
+    } else {
+      setFormData(prev => ({
+        ...prev,
+        social_account_id: accountId
+      }));
     }
   };
 
+  const buildStoragePath = ({ workspaceId, accountId, filename }) => {
+    const safeName = filename.replace(/[^\w.\-]+/g, '_');
+    const ts = Date.now();
+    return `${workspaceId || 'unknown-workspace'}/${accountId || 'unknown-account'}/${ts}-${safeName}`;
+  };
+
   const handleFileUpload = async (e) => {
-    const files = Array.from(e.target.files);
+    const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
-    
+
+    // Require account selection so we can place files in a good folder
+    if (!formData.social_account_id) {
+      toast.error('Select a social account before uploading.');
+      return;
+    }
+
     setUploading(true);
     try {
-      const uploadPromises = files.map(file => 
-        base44.integrations.Core.UploadFile({ file })
-      );
-      const results = await Promise.all(uploadPromises);
-      
-      const newUrls = results.map(r => r.file_url);
-      const newTypes = files.map(f => f.type.startsWith('video') ? 'video' : 'image');
-      
+      const workspaceId = formData.workspace_id || 'unknown-workspace';
+      const accountId = formData.social_account_id;
+
+      // Upload each file to Supabase Storage
+      const uploaded = [];
+      for (const file of files) {
+        const path = buildStoragePath({
+          workspaceId,
+          accountId,
+          filename: file.name
+        });
+
+        const { error: upErr } = await supabase
+          .storage
+          .from(STORAGE_BUCKET)
+          .upload(path, file, {
+            cacheControl: '3600',
+            upsert: false
+          });
+
+        if (upErr) throw upErr;
+
+        // Get a URL you can store/use in the app
+        const { data: pub } = supabase
+          .storage
+          .from(STORAGE_BUCKET)
+          .getPublicUrl(path);
+
+        const url = pub?.publicUrl;
+        if (!url) throw new Error('Failed to generate public URL for upload.');
+
+        uploaded.push({
+          url,
+          type: file.type.startsWith('video') ? 'video' : 'image'
+        });
+      }
+
       setFormData(prev => ({
         ...prev,
-        asset_urls: [...prev.asset_urls, ...newUrls],
-        asset_types: [...prev.asset_types, ...newTypes]
+        asset_urls: [...prev.asset_urls, ...uploaded.map(u => u.url)],
+        asset_types: [...prev.asset_types, ...uploaded.map(u => u.type)]
       }));
-      
+
       toast.success(`${files.length} file(s) uploaded`);
     } catch (error) {
-      toast.error('Failed to upload files');
+      console.error(error);
+      toast.error('Failed to upload files (check bucket name + Storage permissions)');
     } finally {
       setUploading(false);
+
+      // Reset input so user can upload same file again if needed
+      e.target.value = '';
     }
   };
 
@@ -195,12 +272,12 @@ export default function PostForm({
       {/* Account Selection */}
       <div className="bg-white rounded-xl border border-slate-200/60 p-6">
         <h3 className="text-sm font-medium text-slate-700 mb-4">Account & Schedule</h3>
-        
+
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <Label>Social Account</Label>
-            <Select 
-              value={formData.social_account_id} 
+            <Select
+              value={formData.social_account_id}
               onValueChange={handleAccountChange}
               disabled={isClient()}
             >
@@ -222,8 +299,8 @@ export default function PostForm({
 
           <div>
             <Label>Status</Label>
-            <Select 
-              value={formData.status} 
+            <Select
+              value={formData.status}
               onValueChange={(v) => setFormData(prev => ({ ...prev, status: v }))}
               disabled={isClient()}
             >
@@ -290,14 +367,14 @@ export default function PostForm({
       {/* Content */}
       <div className="bg-white rounded-xl border border-slate-200/60 p-6">
         <h3 className="text-sm font-medium text-slate-700 mb-4">Content</h3>
-        
+
         <Tabs defaultValue="caption" className="w-full">
           <TabsList className="grid w-full grid-cols-3 mb-4">
             <TabsTrigger value="caption">Caption</TabsTrigger>
             <TabsTrigger value="hashtags">Hashtags</TabsTrigger>
             <TabsTrigger value="comment">First Comment</TabsTrigger>
           </TabsList>
-          
+
           <TabsContent value="caption">
             <div className="relative">
               <Textarea
@@ -327,7 +404,7 @@ export default function PostForm({
               {formData.caption.length} characters
             </p>
           </TabsContent>
-          
+
           <TabsContent value="hashtags">
             <div className="relative">
               <div className="absolute left-3 top-3 w-4 h-4 text-slate-400">
@@ -357,7 +434,7 @@ export default function PostForm({
               )}
             </div>
           </TabsContent>
-          
+
           <TabsContent value="comment">
             <div className="relative">
               <Textarea
@@ -437,7 +514,7 @@ export default function PostForm({
                 ) : (
                   <img src={url} alt="" className="w-full h-full object-cover" />
                 )}
-                
+
                 {/* Overlay */}
                 <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
                   <Button
@@ -477,7 +554,7 @@ export default function PostForm({
       {/* Notes */}
       <div className="bg-white rounded-xl border border-slate-200/60 p-6">
         <h3 className="text-sm font-medium text-slate-700 mb-4">Notes</h3>
-        
+
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {!isClient() && (
             <div>
@@ -519,7 +596,7 @@ export default function PostForm({
                 type="button"
                 variant="ghost"
                 className="text-red-600 hover:text-red-700 hover:bg-red-50"
-                onClick={() => onDelete(post.id)}
+                onClick={() => onDelete()}
               >
                 <Trash2 className="w-4 h-4 mr-2" />
                 Delete Post
