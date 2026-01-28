@@ -1,11 +1,12 @@
+// src/pages/Calendar.jsx
 import React, { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
-import { base44 } from '@/api/base44Client';
+import { supabase } from '@/api/supabaseClient';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/components/auth/AuthProvider';
 import { format } from 'date-fns';
-import { Plus, Filter, LayoutGrid } from 'lucide-react';
+import { Plus, LayoutGrid } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import { 
   Select, 
@@ -19,40 +20,69 @@ import CalendarView from '@/components/calendar/CalendarView';
 
 export default function Calendar() {
   const navigate = useNavigate();
-  const { user, isAdmin } = useAuth();
+  const { user, isAdmin, assignedAccounts } = useAuth();
   const [selectedWorkspace, setSelectedWorkspace] = useState('all');
   const [selectedPlatform, setSelectedPlatform] = useState('all');
   const [selectedAccount, setSelectedAccount] = useState('all');
 
   const { data: workspaces = [] } = useQuery({
     queryKey: ['workspaces'],
-    queryFn: () => base44.entities.Workspace.list()
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('workspaces')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      return data ?? [];
+    }
   });
 
   const { data: allAccounts = [], isLoading: loadingAccounts } = useQuery({
     queryKey: ['accounts'],
-    queryFn: () => base44.entities.SocialAccount.list()
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('social_accounts')
+        .select('*');
+
+      if (error) throw error;
+      return data ?? [];
+    }
   });
 
   const { data: allPosts = [], isLoading: loadingPosts } = useQuery({
     queryKey: ['posts'],
-    queryFn: () => base44.entities.Post.list()
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('posts')
+        .select('*');
+
+      if (error) throw error;
+      return data ?? [];
+    }
   });
 
-  // Filter accounts based on role
+  // Filter accounts based on role (keeps your current behavior)
   const accounts = useMemo(() => {
     if (isAdmin()) return allAccounts;
-    return allAccounts.filter(acc => 
-      acc.assigned_manager_email === user?.email || 
+
+    // Prefer the auth-provided assignedAccounts if it exists
+    if (Array.isArray(assignedAccounts) && assignedAccounts.length > 0) {
+      return assignedAccounts;
+    }
+
+    // Fallback to legacy fields (still fine if you kept them in your schema)
+    return allAccounts.filter(acc =>
+      acc.assigned_manager_email === user?.email ||
       acc.collaborator_emails?.includes(user?.email)
     );
-  }, [allAccounts, isAdmin, user]);
+  }, [allAccounts, isAdmin, user, assignedAccounts]);
 
   // Filter posts
   const posts = useMemo(() => {
     const accountIds = accounts.map(a => a.id);
     let filtered = allPosts.filter(p => accountIds.includes(p.social_account_id));
-    
+
     if (selectedWorkspace !== 'all') {
       filtered = filtered.filter(p => p.workspace_id === selectedWorkspace);
     }
@@ -62,7 +92,7 @@ export default function Calendar() {
     if (selectedAccount !== 'all') {
       filtered = filtered.filter(p => p.social_account_id === selectedAccount);
     }
-    
+
     return filtered;
   }, [allPosts, accounts, selectedWorkspace, selectedPlatform, selectedAccount]);
 
