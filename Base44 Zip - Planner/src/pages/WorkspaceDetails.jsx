@@ -1,12 +1,13 @@
-import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { createPageUrl } from '@/utils';
-import { base44 } from '@/api/base44Client';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useAuth } from '@/components/auth/AuthProvider';
-import { 
-  ArrowLeft, 
-  Plus, 
+// src/pages/WorkspaceDetails.jsx
+import React, { useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { createPageUrl } from "@/utils";
+import { supabase } from "@/api/supabaseClient";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useAuth } from "@/components/auth/AuthProvider";
+import {
+  ArrowLeft,
+  Plus,
   UserPlus,
   Users,
   Trash2,
@@ -14,19 +15,19 @@ import {
   MoreVertical,
   Loader2,
   Building2,
-  Book
-} from 'lucide-react';
+  Book,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { 
-  Select, 
-  SelectContent, 
-  SelectItem, 
-  SelectTrigger, 
-  SelectValue 
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from "@/components/ui/select";
 import {
   Dialog,
@@ -45,132 +46,250 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { toast } from "sonner";
-import PlatformIcon, { platformConfig } from '@/components/ui/PlatformIcon';
+import PlatformIcon, { platformConfig } from "@/components/ui/PlatformIcon";
 
 export default function WorkspaceDetails() {
   const navigate = useNavigate();
   const { isAdmin } = useAuth();
   const queryClient = useQueryClient();
-  
+
   const urlParams = new URLSearchParams(window.location.search);
-  const workspaceId = urlParams.get('id');
+  const workspaceId = urlParams.get("id");
 
   const [showAccountDialog, setShowAccountDialog] = useState(false);
   const [showMemberDialog, setShowMemberDialog] = useState(false);
   const [editingAccount, setEditingAccount] = useState(null);
+
   const [accountForm, setAccountForm] = useState({
-    platform: 'instagram',
-    handle: '',
-    display_name: '',
-    assigned_manager_email: ''
-  });
-  const [memberForm, setMemberForm] = useState({
-    user_email: '',
-    role: 'client_viewer'
+    platform: "instagram",
+    handle: "",
+    display_name: "",
+    assigned_manager_email: "",
   });
 
+  // Supabase uses user_id for workspace members (not email)
+  const [memberForm, setMemberForm] = useState({
+    user_id: "",
+    role: "client_viewer",
+  });
+
+  // -------------------------
+  // Queries
+  // -------------------------
+
   const { data: workspace, isLoading: loadingWorkspace } = useQuery({
-    queryKey: ['workspace', workspaceId],
-    queryFn: () => base44.entities.Workspace.filter({ id: workspaceId }).then(r => r[0]),
-    enabled: !!workspaceId
+    queryKey: ["workspace", workspaceId],
+    enabled: !!workspaceId,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("workspaces")
+        .select("*")
+        .eq("id", workspaceId)
+        .single();
+
+      if (error) throw error;
+      return data;
+    },
   });
 
   const { data: accounts = [] } = useQuery({
-    queryKey: ['workspace-accounts', workspaceId],
-    queryFn: () => base44.entities.SocialAccount.filter({ workspace_id: workspaceId }),
-    enabled: !!workspaceId
+    queryKey: ["workspace-accounts", workspaceId],
+    enabled: !!workspaceId,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("social_accounts")
+        .select("*")
+        .eq("workspace_id", workspaceId)
+        .order("created_at", { ascending: true });
+
+      if (error) throw error;
+      return data ?? [];
+    },
   });
 
+  // Load members + profile info (requires FK workspace_members.user_id -> profiles.id)
   const { data: members = [] } = useQuery({
-    queryKey: ['workspace-members', workspaceId],
-    queryFn: () => base44.entities.WorkspaceMember.filter({ workspace_id: workspaceId }),
-    enabled: !!workspaceId
+    queryKey: ["workspace-members", workspaceId],
+    enabled: !!workspaceId,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("workspace_members")
+        .select(
+          `
+          workspace_id,
+          user_id,
+          role,
+          created_at,
+          profiles:profiles ( id, full_name, role, email )
+        `
+        )
+        .eq("workspace_id", workspaceId)
+        .order("created_at", { ascending: true });
+
+      if (error) throw error;
+      return data ?? [];
+    },
   });
 
+  // Users list comes from profiles (client-side safe)
   const { data: allUsers = [] } = useQuery({
-    queryKey: ['users'],
-    queryFn: () => base44.entities.User.list()
+    queryKey: ["profiles"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("id, full_name, role, email")
+        .order("full_name", { ascending: true });
+
+      if (error) throw error;
+      return data ?? [];
+    },
   });
 
-  // Account mutations
+  // -------------------------
+  // Mutations (Accounts)
+  // -------------------------
+
   const createAccountMutation = useMutation({
-    mutationFn: (data) => base44.entities.SocialAccount.create({
-      ...data,
-      workspace_id: workspaceId
-    }),
+    mutationFn: async (payload) => {
+      const { data, error } = await supabase
+        .from("social_accounts")
+        .insert([{ ...payload, workspace_id: workspaceId }])
+        .select("*")
+        .single();
+
+      if (error) throw error;
+      return data;
+    },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['workspace-accounts', workspaceId] });
+      queryClient.invalidateQueries({ queryKey: ["workspace-accounts", workspaceId] });
       setShowAccountDialog(false);
       resetAccountForm();
-      toast.success('Account added');
-    }
+      toast.success("Account added");
+    },
+    onError: (err) => {
+      console.error("[WorkspaceDetails] create account error:", err);
+      toast.error("Failed to add account");
+    },
   });
 
   const updateAccountMutation = useMutation({
-    mutationFn: ({ id, data }) => base44.entities.SocialAccount.update(id, data),
+    mutationFn: async ({ id, data: payload }) => {
+      const { data, error } = await supabase
+        .from("social_accounts")
+        .update(payload)
+        .eq("id", id)
+        .select("*")
+        .single();
+
+      if (error) throw error;
+      return data;
+    },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['workspace-accounts', workspaceId] });
+      queryClient.invalidateQueries({ queryKey: ["workspace-accounts", workspaceId] });
       setShowAccountDialog(false);
       resetAccountForm();
-      toast.success('Account updated');
-    }
+      toast.success("Account updated");
+    },
+    onError: (err) => {
+      console.error("[WorkspaceDetails] update account error:", err);
+      toast.error("Failed to update account");
+    },
   });
 
   const deleteAccountMutation = useMutation({
-    mutationFn: (id) => base44.entities.SocialAccount.delete(id),
+    mutationFn: async (id) => {
+      const { error } = await supabase.from("social_accounts").delete().eq("id", id);
+      if (error) throw error;
+      return true;
+    },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['workspace-accounts', workspaceId] });
-      toast.success('Account removed');
-    }
+      queryClient.invalidateQueries({ queryKey: ["workspace-accounts", workspaceId] });
+      toast.success("Account removed");
+    },
+    onError: (err) => {
+      console.error("[WorkspaceDetails] delete account error:", err);
+      toast.error("Failed to remove account");
+    },
   });
 
-  // Member mutations
+  // -------------------------
+  // Mutations (Members)
+  // -------------------------
+
   const createMemberMutation = useMutation({
-    mutationFn: (data) => base44.entities.WorkspaceMember.create({
-      ...data,
-      workspace_id: workspaceId
-    }),
+    mutationFn: async ({ user_id, role }) => {
+      const { data, error } = await supabase
+        .from("workspace_members")
+        .insert([{ workspace_id: workspaceId, user_id, role }])
+        .select("*")
+        .single();
+
+      if (error) throw error;
+      return data;
+    },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['workspace-members', workspaceId] });
+      queryClient.invalidateQueries({ queryKey: ["workspace-members", workspaceId] });
       setShowMemberDialog(false);
-      setMemberForm({ user_email: '', role: 'client_viewer' });
-      toast.success('Member added');
-    }
+      setMemberForm({ user_id: "", role: "client_viewer" });
+      toast.success("Member added");
+    },
+    onError: (err) => {
+      console.error("[WorkspaceDetails] add member error:", err);
+      toast.error("Failed to add member (check RLS / duplicates)");
+    },
   });
 
   const deleteMemberMutation = useMutation({
-    mutationFn: (id) => base44.entities.WorkspaceMember.delete(id),
+    mutationFn: async ({ user_id }) => {
+      // workspace_members commonly has a composite PK (workspace_id, user_id)
+      const { error } = await supabase
+        .from("workspace_members")
+        .delete()
+        .eq("workspace_id", workspaceId)
+        .eq("user_id", user_id);
+
+      if (error) throw error;
+      return true;
+    },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['workspace-members', workspaceId] });
-      toast.success('Member removed');
-    }
+      queryClient.invalidateQueries({ queryKey: ["workspace-members", workspaceId] });
+      toast.success("Member removed");
+    },
+    onError: (err) => {
+      console.error("[WorkspaceDetails] remove member error:", err);
+      toast.error("Failed to remove member");
+    },
   });
+
+  // -------------------------
+  // Helpers
+  // -------------------------
 
   const resetAccountForm = () => {
     setEditingAccount(null);
     setAccountForm({
-      platform: 'instagram',
-      handle: '',
-      display_name: '',
-      assigned_manager_email: ''
+      platform: "instagram",
+      handle: "",
+      display_name: "",
+      assigned_manager_email: "",
     });
   };
 
   const openEditAccountDialog = (account) => {
     setEditingAccount(account);
     setAccountForm({
-      platform: account.platform,
-      handle: account.handle,
-      display_name: account.display_name || '',
-      assigned_manager_email: account.assigned_manager_email
+      platform: account.platform ?? "instagram",
+      handle: account.handle ?? "",
+      display_name: account.display_name ?? "",
+      assigned_manager_email: account.assigned_manager_email ?? "",
     });
     setShowAccountDialog(true);
   };
 
   const handleAccountSubmit = (e) => {
     e.preventDefault();
-    if (!accountForm.handle || !accountForm.assigned_manager_email) {
-      toast.error('Please fill in required fields');
+    if (!accountForm.handle) {
+      toast.error("Please enter a handle/username");
       return;
     }
 
@@ -181,49 +300,38 @@ export default function WorkspaceDetails() {
     }
   };
 
-  const handleMemberSubmit = async (e) => {
+  const handleMemberSubmit = (e) => {
     e.preventDefault();
-    if (!memberForm.user_email) {
-      toast.error('Please enter an email');
+    if (!memberForm.user_id) {
+      toast.error("Please select a user");
       return;
     }
-
-    // Check if user exists in the app
-    const userExists = allUsers.some(u => u.email === memberForm.user_email);
-    
-    if (!userExists) {
-      try {
-        // Invite user to the app first
-        const appRole = memberForm.role === 'account_manager' ? 'admin' : 'user';
-        await base44.users.inviteUser(memberForm.user_email, appRole);
-        toast.success(`Invitation sent to ${memberForm.user_email}`);
-      } catch (error) {
-        toast.error('Failed to send invitation');
-        return;
-      }
-    }
-    
-    // Add user to workspace
     createMemberMutation.mutate(memberForm);
   };
 
-  const getInitials = (email) => {
-    const user = allUsers.find(u => u.email === email);
-    if (user?.full_name) {
-      return user.full_name.split(' ').map(n => n[0]).join('').toUpperCase();
-    }
-    return email[0].toUpperCase();
+  const usersById = useMemo(() => {
+    const map = new Map();
+    (allUsers ?? []).forEach((u) => map.set(u.id, u));
+    return map;
+  }, [allUsers]);
+
+  const getInitials = (fullNameOrEmail) => {
+    if (!fullNameOrEmail) return "U";
+    const parts = String(fullNameOrEmail).trim().split(" ");
+    if (parts.length === 1) return parts[0][0]?.toUpperCase() ?? "U";
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
   };
 
-  const getUserName = (email) => {
-    const user = allUsers.find(u => u.email === email);
-    return user?.full_name || email;
-  };
+  // -------------------------
+  // Guards / Loading states
+  // -------------------------
 
   if (!isAdmin()) {
     return (
       <div className="max-w-[1200px] mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <p className="text-center text-slate-500">You don't have access to this page.</p>
+        <p className="text-center text-slate-500">
+          You don't have access to this page.
+        </p>
       </div>
     );
   }
@@ -255,15 +363,20 @@ export default function WorkspaceDetails() {
         </Button>
         <div className="flex-1 flex items-center gap-3">
           <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-violet-500 to-indigo-500 flex items-center justify-center text-white font-semibold text-lg">
-            {workspace.name[0].toUpperCase()}
+            {(workspace.name?.[0] ?? "W").toUpperCase()}
           </div>
           <div>
             <h1 className="text-2xl font-bold text-slate-900">{workspace.name}</h1>
-            <p className="text-slate-500">/{workspace.slug}</p>
+            {workspace.slug ? (
+              <p className="text-slate-500">/{workspace.slug}</p>
+            ) : null}
           </div>
         </div>
+
         <Button
-          onClick={() => navigate(createPageUrl(`BrandGuidelines?workspace=${workspaceId}`))}
+          onClick={() =>
+            navigate(createPageUrl(`BrandGuidelines?workspace=${workspaceId}`))
+          }
           variant="outline"
           className="bg-gradient-to-r from-purple-50 to-pink-50 border-purple-200 hover:from-purple-100 hover:to-pink-100"
         >
@@ -284,10 +397,12 @@ export default function WorkspaceDetails() {
           <Card className="bg-white border-slate-200/60">
             <CardHeader className="flex flex-row items-center justify-between">
               <CardTitle>Social Accounts</CardTitle>
-              <Button onClick={() => {
-                resetAccountForm();
-                setShowAccountDialog(true);
-              }}>
+              <Button
+                onClick={() => {
+                  resetAccountForm();
+                  setShowAccountDialog(true);
+                }}
+              >
                 <Plus className="w-4 h-4 mr-2" />
                 Add Account
               </Button>
@@ -302,8 +417,8 @@ export default function WorkspaceDetails() {
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {accounts.map(account => (
-                    <div 
+                  {accounts.map((account) => (
+                    <div
                       key={account.id}
                       className="flex items-center justify-between p-4 rounded-xl bg-slate-50"
                     >
@@ -316,13 +431,16 @@ export default function WorkspaceDetails() {
                           </p>
                         </div>
                       </div>
+
                       <div className="flex items-center gap-4">
+                        {/* assigned_manager_email is optional – keep it as plain text */}
                         <div className="text-right">
                           <p className="text-sm text-slate-500">Assigned to</p>
                           <p className="text-sm font-medium text-slate-700">
-                            {getUserName(account.assigned_manager_email)}
+                            {account.assigned_manager_email || "—"}
                           </p>
                         </div>
+
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <Button variant="ghost" size="icon">
@@ -334,10 +452,10 @@ export default function WorkspaceDetails() {
                               <Pencil className="w-4 h-4 mr-2" />
                               Edit
                             </DropdownMenuItem>
-                            <DropdownMenuItem 
+                            <DropdownMenuItem
                               className="text-red-600"
                               onClick={() => {
-                                if (confirm('Delete this account?')) {
+                                if (confirm("Delete this account?")) {
                                   deleteAccountMutation.mutate(account.id);
                                 }
                               }}
@@ -376,46 +494,66 @@ export default function WorkspaceDetails() {
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {members.map(member => (
-                    <div 
-                      key={member.id}
-                      className="flex items-center justify-between p-4 rounded-xl bg-slate-50"
-                    >
-                      <div className="flex items-center gap-3">
-                        <Avatar className="w-10 h-10">
-                          <AvatarFallback className="bg-slate-200">
-                            {getInitials(member.user_email)}
-                          </AvatarFallback>
-                        </Avatar>
-                        <div>
-                          <p className="font-medium text-slate-900">
-                            {getUserName(member.user_email)}
-                          </p>
-                          <p className="text-sm text-slate-500">{member.user_email}</p>
+                  {members.map((member) => {
+                    const profile =
+                      member.profiles ||
+                      usersById.get(member.user_id) ||
+                      null;
+
+                    const displayName =
+                      profile?.full_name ||
+                      profile?.email ||
+                      member.user_id;
+
+                    const email = profile?.email || "";
+
+                    return (
+                      <div
+                        key={`${member.workspace_id}-${member.user_id}`}
+                        className="flex items-center justify-between p-4 rounded-xl bg-slate-50"
+                      >
+                        <div className="flex items-center gap-3">
+                          <Avatar className="w-10 h-10">
+                            <AvatarFallback className="bg-slate-200">
+                              {getInitials(displayName)}
+                            </AvatarFallback>
+                          </Avatar>
+                          <div>
+                            <p className="font-medium text-slate-900">{displayName}</p>
+                            {email ? (
+                              <p className="text-sm text-slate-500">{email}</p>
+                            ) : (
+                              <p className="text-xs text-slate-400">ID: {member.user_id}</p>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-4">
+                          <span
+                            className={`px-3 py-1 rounded-full text-xs font-medium ${
+                              member.role === "client_approver"
+                                ? "bg-violet-100 text-violet-700"
+                                : "bg-slate-200 text-slate-700"
+                            }`}
+                          >
+                            {String(member.role).replace("_", " ")}
+                          </span>
+
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => {
+                              if (confirm("Remove this member?")) {
+                                deleteMemberMutation.mutate({ user_id: member.user_id });
+                              }
+                            }}
+                          >
+                            <Trash2 className="w-4 h-4 text-red-500" />
+                          </Button>
                         </div>
                       </div>
-                      <div className="flex items-center gap-4">
-                        <span className={`px-3 py-1 rounded-full text-xs font-medium ${
-                          member.role === 'client_approver' 
-                            ? 'bg-violet-100 text-violet-700'
-                            : 'bg-slate-200 text-slate-700'
-                        }`}>
-                          {member.role.replace('_', ' ')}
-                        </span>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => {
-                            if (confirm('Remove this member?')) {
-                              deleteMemberMutation.mutate(member.id);
-                            }
-                          }}
-                        >
-                          <Trash2 className="w-4 h-4 text-red-500" />
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </CardContent>
@@ -434,16 +572,20 @@ export default function WorkspaceDetails() {
                   <p className="text-sm text-slate-500">Name</p>
                   <p className="font-medium">{workspace.name}</p>
                 </div>
-                <div>
-                  <p className="text-sm text-slate-500">Slug</p>
-                  <p className="font-medium">/{workspace.slug}</p>
-                </div>
-                {workspace.notes && (
+
+                {workspace.slug ? (
+                  <div>
+                    <p className="text-sm text-slate-500">Slug</p>
+                    <p className="font-medium">/{workspace.slug}</p>
+                  </div>
+                ) : null}
+
+                {workspace.notes ? (
                   <div>
                     <p className="text-sm text-slate-500">Notes</p>
                     <p className="text-sm">{workspace.notes}</p>
                   </div>
-                )}
+                ) : null}
               </CardContent>
             </Card>
 
@@ -460,14 +602,21 @@ export default function WorkspaceDetails() {
                   <p className="text-sm text-slate-500">Team Members</p>
                   <p className="font-semibold text-xl">{members.length}</p>
                 </div>
-                <div className="flex justify-between items-center">
-                  <p className="text-sm text-slate-500">Status</p>
-                  <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                    workspace.is_active ? 'bg-green-100 text-green-700' : 'bg-slate-200 text-slate-700'
-                  }`}>
-                    {workspace.is_active ? 'Active' : 'Inactive'}
-                  </span>
-                </div>
+
+                {"is_active" in workspace ? (
+                  <div className="flex justify-between items-center">
+                    <p className="text-sm text-slate-500">Status</p>
+                    <span
+                      className={`px-2 py-1 rounded-full text-xs font-medium ${
+                        workspace.is_active
+                          ? "bg-green-100 text-green-700"
+                          : "bg-slate-200 text-slate-700"
+                      }`}
+                    >
+                      {workspace.is_active ? "Active" : "Inactive"}
+                    </span>
+                  </div>
+                ) : null}
               </CardContent>
             </Card>
           </div>
@@ -478,19 +627,20 @@ export default function WorkspaceDetails() {
       <Dialog open={showAccountDialog} onOpenChange={setShowAccountDialog}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>
-              {editingAccount ? 'Edit Account' : 'Add Social Account'}
-            </DialogTitle>
+            <DialogTitle>{editingAccount ? "Edit Account" : "Add Social Account"}</DialogTitle>
             <DialogDescription>
-              {editingAccount ? 'Update account details' : 'Add a new social account to this workspace'}
+              {editingAccount ? "Update account details" : "Add a new social account to this workspace"}
             </DialogDescription>
           </DialogHeader>
+
           <form onSubmit={handleAccountSubmit} className="space-y-4">
             <div>
               <Label>Platform</Label>
-              <Select 
-                value={accountForm.platform} 
-                onValueChange={(v) => setAccountForm(prev => ({ ...prev, platform: v }))}
+              <Select
+                value={accountForm.platform}
+                onValueChange={(v) =>
+                  setAccountForm((prev) => ({ ...prev, platform: v }))
+                }
               >
                 <SelectTrigger className="mt-1.5">
                   <SelectValue />
@@ -507,54 +657,68 @@ export default function WorkspaceDetails() {
                 </SelectContent>
               </Select>
             </div>
+
             <div>
               <Label>Handle / Username *</Label>
               <Input
                 value={accountForm.handle}
-                onChange={(e) => setAccountForm(prev => ({ ...prev, handle: e.target.value }))}
+                onChange={(e) =>
+                  setAccountForm((prev) => ({ ...prev, handle: e.target.value }))
+                }
                 placeholder="@username"
                 className="mt-1.5"
               />
             </div>
+
             <div>
               <Label>Display Name</Label>
               <Input
                 value={accountForm.display_name}
-                onChange={(e) => setAccountForm(prev => ({ ...prev, display_name: e.target.value }))}
+                onChange={(e) =>
+                  setAccountForm((prev) => ({
+                    ...prev,
+                    display_name: e.target.value,
+                  }))
+                }
                 placeholder="Account display name"
                 className="mt-1.5"
               />
             </div>
+
             <div>
-              <Label>Assigned Account Manager *</Label>
-              <Select 
-                value={accountForm.assigned_manager_email} 
-                onValueChange={(v) => setAccountForm(prev => ({ ...prev, assigned_manager_email: v }))}
-              >
-                <SelectTrigger className="mt-1.5">
-                  <SelectValue placeholder="Select manager" />
-                </SelectTrigger>
-                <SelectContent>
-                  {allUsers.filter(u => u.role === 'admin' || u.role === 'user').map(user => (
-                    <SelectItem key={user.email} value={user.email}>
-                      {user.full_name || user.email}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Label>Assigned Account Manager (email)</Label>
+              <Input
+                value={accountForm.assigned_manager_email}
+                onChange={(e) =>
+                  setAccountForm((prev) => ({
+                    ...prev,
+                    assigned_manager_email: e.target.value,
+                  }))
+                }
+                placeholder="manager@email.com"
+                className="mt-1.5"
+              />
+              <p className="text-xs text-slate-400 mt-1">
+                (Optional) If you later switch to an ID-based assignment, we’ll update this field.
+              </p>
             </div>
+
             <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setShowAccountDialog(false)}>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setShowAccountDialog(false)}
+              >
                 Cancel
               </Button>
-              <Button 
-                type="submit" 
+              <Button
+                type="submit"
                 disabled={createAccountMutation.isPending || updateAccountMutation.isPending}
               >
                 {(createAccountMutation.isPending || updateAccountMutation.isPending) && (
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                 )}
-                {editingAccount ? 'Update' : 'Add Account'}
+                {editingAccount ? "Update" : "Add Account"}
               </Button>
             </DialogFooter>
           </form>
@@ -567,25 +731,36 @@ export default function WorkspaceDetails() {
           <DialogHeader>
             <DialogTitle>Add Team Member</DialogTitle>
             <DialogDescription>
-              Add a client or team member to this workspace. New users will receive an invitation email.
+              In Supabase (client-side), you can only add users that already exist in <code>profiles</code>.
+              If you need email invites, that requires a server/admin function.
             </DialogDescription>
           </DialogHeader>
+
           <form onSubmit={handleMemberSubmit} className="space-y-4">
             <div>
-              <Label>Email Address</Label>
-              <Input
-                type="email"
-                value={memberForm.user_email}
-                onChange={(e) => setMemberForm(prev => ({ ...prev, user_email: e.target.value }))}
-                placeholder="email@example.com"
-                className="mt-1.5"
-              />
+              <Label>User</Label>
+              <Select
+                value={memberForm.user_id}
+                onValueChange={(v) => setMemberForm((prev) => ({ ...prev, user_id: v }))}
+              >
+                <SelectTrigger className="mt-1.5">
+                  <SelectValue placeholder="Select a user" />
+                </SelectTrigger>
+                <SelectContent>
+                  {allUsers.map((u) => (
+                    <SelectItem key={u.id} value={u.id}>
+                      {u.full_name || u.email || u.id}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
+
             <div>
               <Label>Role</Label>
-              <Select 
-                value={memberForm.role} 
-                onValueChange={(v) => setMemberForm(prev => ({ ...prev, role: v }))}
+              <Select
+                value={memberForm.role}
+                onValueChange={(v) => setMemberForm((prev) => ({ ...prev, role: v }))}
               >
                 <SelectTrigger className="mt-1.5">
                   <SelectValue />
@@ -597,8 +772,13 @@ export default function WorkspaceDetails() {
                 </SelectContent>
               </Select>
             </div>
+
             <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setShowMemberDialog(false)}>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setShowMemberDialog(false)}
+              >
                 Cancel
               </Button>
               <Button type="submit" disabled={createMemberMutation.isPending}>
