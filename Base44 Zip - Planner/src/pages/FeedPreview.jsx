@@ -1,10 +1,11 @@
+// src/pages/FeedPreview.jsx
 import React, { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
-import { base44 } from '@/api/base44Client';
+import { supabase } from '@/api/supabaseClient';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/components/auth/AuthProvider';
-import { ArrowLeft, Grid3X3, List, Plus } from 'lucide-react';
+import { ArrowLeft, Plus } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import { 
   Select, 
@@ -13,68 +14,101 @@ import {
   SelectTrigger, 
   SelectValue 
 } from "@/components/ui/select";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import FeedPreviewGrid from '@/components/feed/FeedPreviewGrid';
 import PlatformIcon, { platformConfig } from '@/components/ui/PlatformIcon';
 
 export default function FeedPreview() {
   const navigate = useNavigate();
-  const { user, isAdmin, isClient } = useAuth();
+  const { user, isAdmin, isClient, assignedAccounts } = useAuth();
   const [selectedWorkspace, setSelectedWorkspace] = useState('all');
   const [selectedAccount, setSelectedAccount] = useState('all');
   const [selectedPlatform, setSelectedPlatform] = useState('instagram');
 
   const { data: workspaces = [] } = useQuery({
     queryKey: ['workspaces'],
-    queryFn: () => base44.entities.Workspace.list()
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('workspaces')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      return data ?? [];
+    }
   });
 
   const { data: allAccounts = [], isLoading: loadingAccounts } = useQuery({
     queryKey: ['accounts'],
-    queryFn: () => base44.entities.SocialAccount.list()
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('social_accounts')
+        .select('*');
+
+      if (error) throw error;
+      return data ?? [];
+    }
   });
 
   const { data: allPosts = [], isLoading: loadingPosts } = useQuery({
     queryKey: ['posts'],
-    queryFn: () => base44.entities.Post.list()
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('posts')
+        .select('*');
+
+      if (error) throw error;
+      return data ?? [];
+    }
   });
 
-  // Filter accounts based on role
+  // Filter accounts based on role (preserving your logic)
   const accounts = useMemo(() => {
     if (isAdmin()) return allAccounts;
+
     if (isClient()) {
-      // Get client's workspace
-      return allAccounts; // Will be filtered by workspace later
+      // Clients: accounts are later filtered by workspace/platform selection + RLS server-side
+      return allAccounts;
     }
-    return allAccounts.filter(acc => 
-      acc.assigned_manager_email === user?.email || 
+
+    // Prefer auth-provided assignedAccounts if present
+    if (Array.isArray(assignedAccounts) && assignedAccounts.length > 0) {
+      return assignedAccounts;
+    }
+
+    // Fallback to legacy fields
+    return allAccounts.filter(acc =>
+      acc.assigned_manager_email === user?.email ||
       acc.collaborator_emails?.includes(user?.email)
     );
-  }, [allAccounts, isAdmin, isClient, user]);
+  }, [allAccounts, isAdmin, isClient, user, assignedAccounts]);
 
   // Filter accounts by workspace and platform
   const filteredAccounts = useMemo(() => {
     let accs = accounts;
+
     if (selectedWorkspace !== 'all') {
       accs = accs.filter(a => a.workspace_id === selectedWorkspace);
     }
+
     accs = accs.filter(a => a.platform === selectedPlatform);
+
     return accs;
   }, [accounts, selectedWorkspace, selectedPlatform]);
 
   // Filter posts
   const posts = useMemo(() => {
+    // Keep your exact behavior: hide posted, sort by order_index
     let filtered = allPosts.filter(p => p.status !== 'posted');
-    
+
     if (selectedAccount !== 'all') {
       filtered = filtered.filter(p => p.social_account_id === selectedAccount);
     } else {
       const accountIds = filteredAccounts.map(a => a.id);
       filtered = filtered.filter(p => accountIds.includes(p.social_account_id));
     }
-    
-    // Sort by order_index
+
     return filtered.sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
   }, [allPosts, selectedAccount, filteredAccounts]);
 
@@ -99,8 +133,9 @@ export default function FeedPreview() {
             </p>
           </div>
         </div>
+
         {!isClient() && (
-          <Button 
+          <Button
             className="bg-slate-900 hover:bg-slate-800"
             onClick={() => navigate(createPageUrl('PostEditor'))}
           >
@@ -111,10 +146,14 @@ export default function FeedPreview() {
       </div>
 
       {/* Platform Tabs */}
-      <Tabs value={selectedPlatform} onValueChange={(v) => {
-        setSelectedPlatform(v);
-        setSelectedAccount('all');
-      }} className="mb-6">
+      <Tabs
+        value={selectedPlatform}
+        onValueChange={(v) => {
+          setSelectedPlatform(v);
+          setSelectedAccount('all');
+        }}
+        className="mb-6"
+      >
         <TabsList className="bg-white border border-slate-200">
           {Object.entries(platformConfig).map(([key, config]) => (
             <TabsTrigger key={key} value={key} className="flex items-center gap-2">
@@ -128,10 +167,13 @@ export default function FeedPreview() {
       {/* Filters */}
       <div className="flex flex-wrap gap-3 mb-6">
         {isAdmin() && (
-          <Select value={selectedWorkspace} onValueChange={(v) => {
-            setSelectedWorkspace(v);
-            setSelectedAccount('all');
-          }}>
+          <Select
+            value={selectedWorkspace}
+            onValueChange={(v) => {
+              setSelectedWorkspace(v);
+              setSelectedAccount('all');
+            }}
+          >
             <SelectTrigger className="w-[180px] bg-white">
               <SelectValue placeholder="All Workspaces" />
             </SelectTrigger>
