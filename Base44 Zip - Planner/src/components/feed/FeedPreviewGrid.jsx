@@ -1,39 +1,52 @@
-import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { createPageUrl } from '@/utils';
-import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
-import { base44 } from '@/api/base44Client';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Play, GripVertical } from 'lucide-react';
-import StatusBadge from '@/components/ui/StatusBadge';
-import PlatformIcon from '@/components/ui/PlatformIcon';
+// src/components/feed/FeedPreviewGrid.jsx
+import React, { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { createPageUrl } from "@/utils";
+import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
+import { supabase } from "@/api/supabaseClient";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { Play, GripVertical } from "lucide-react";
+import StatusBadge from "@/components/ui/StatusBadge";
+import PlatformIcon from "@/components/ui/PlatformIcon";
 import { toast } from "sonner";
 
-export default function FeedPreviewGrid({ 
-  posts, 
-  accounts, 
-  platform = 'instagram',
-  isReadOnly = false 
+export default function FeedPreviewGrid({
+  posts,
+  accounts,
+  platform = "instagram",
+  isReadOnly = false,
 }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [items, setItems] = useState(posts);
 
-  React.useEffect(() => {
+  useEffect(() => {
     setItems(posts);
   }, [posts]);
 
   const updateOrderMutation = useMutation({
     mutationFn: async (orderedPosts) => {
-      const updates = orderedPosts.map((post, index) => 
-        base44.entities.Post.update(post.id, { order_index: index })
+      // Update order_index for all posts in the new order.
+      // NOTE: Supabase doesn't have "bulk update different values per row" in one call,
+      // so we do Promise.all of per-row updates.
+      const updates = orderedPosts.map((post, index) =>
+        supabase.from("posts").update({ order_index: index }).eq("id", post.id)
       );
-      await Promise.all(updates);
+
+      const results = await Promise.all(updates);
+
+      // If any update returned an error, throw so react-query treats it as failed.
+      const firstError = results.find((r) => r.error)?.error;
+      if (firstError) throw firstError;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['posts'] });
-      toast.success('Order updated');
-    }
+      queryClient.invalidateQueries({ queryKey: ["posts"] });
+      toast.success("Order updated");
+    },
+    onError: (err) => {
+      console.error("[FeedPreviewGrid] update order error:", err);
+      toast.error("Failed to update order");
+    },
   });
 
   const handleDragEnd = (result) => {
@@ -47,10 +60,10 @@ export default function FeedPreviewGrid({
     updateOrderMutation.mutate(reordered);
   };
 
-  const getAccountById = (id) => accounts.find(a => a.id === id);
+  const getAccountById = (id) => accounts.find((a) => a.id === id);
 
   // Instagram/Facebook - 3 column grid
-  const isGridLayout = platform === 'instagram' || platform === 'facebook';
+  const isGridLayout = platform === "instagram" || platform === "facebook";
 
   if (items.length === 0) {
     return (
@@ -65,20 +78,23 @@ export default function FeedPreviewGrid({
 
   return (
     <DragDropContext onDragEnd={handleDragEnd}>
-      <Droppable droppableId="feed" direction={isGridLayout ? 'horizontal' : 'vertical'}>
+      <Droppable
+        droppableId="feed"
+        direction={isGridLayout ? "horizontal" : "vertical"}
+      >
         {(provided) => (
           <div
             ref={provided.innerRef}
             {...provided.droppableProps}
             className={
               isGridLayout
-                ? 'grid grid-cols-3 gap-1 bg-white rounded-xl overflow-hidden border border-slate-200'
-                : 'space-y-3'
+                ? "grid grid-cols-3 gap-1 bg-white rounded-xl overflow-hidden border border-slate-200"
+                : "space-y-3"
             }
           >
             {items.map((post, index) => {
               const account = getAccountById(post.social_account_id);
-              
+
               return (
                 <Draggable
                   key={post.id}
@@ -93,27 +109,42 @@ export default function FeedPreviewGrid({
                       className={
                         isGridLayout
                           ? `aspect-square relative group cursor-pointer ${
-                              snapshot.isDragging ? 'ring-2 ring-violet-500 z-10' : ''
+                              snapshot.isDragging
+                                ? "ring-2 ring-violet-500 z-10"
+                                : ""
                             }`
                           : `flex gap-4 p-4 bg-white rounded-xl border border-slate-200 ${
-                              snapshot.isDragging ? 'ring-2 ring-violet-500' : ''
+                              snapshot.isDragging
+                                ? "ring-2 ring-violet-500"
+                                : ""
                             }`
                       }
-                      onClick={() => navigate(createPageUrl(isReadOnly ? `ClientPostView?id=${post.id}` : `PostEditor?id=${post.id}`))}
+                      onClick={() =>
+                        navigate(
+                          createPageUrl(
+                            isReadOnly
+                              ? `ClientPostView?id=${post.id}`
+                              : `PostEditor?id=${post.id}`
+                          )
+                        )
+                      }
                     >
                       {isGridLayout ? (
                         <>
                           {/* Grid Item */}
                           <div className="w-full h-full bg-slate-100">
                             {post.asset_urls?.[0] ? (
-                              post.asset_types?.[0] === 'video' ? (
+                              post.asset_types?.[0] === "video" ? (
                                 <div className="relative w-full h-full">
                                   <video
                                     src={post.asset_urls[0]}
                                     className="w-full h-full object-cover"
                                   />
                                   <div className="absolute top-2 right-2">
-                                    <Play className="w-5 h-5 text-white drop-shadow-lg" fill="white" />
+                                    <Play
+                                      className="w-5 h-5 text-white drop-shadow-lg"
+                                      fill="white"
+                                    />
                                   </div>
                                 </div>
                               ) : (
@@ -125,7 +156,10 @@ export default function FeedPreviewGrid({
                               )
                             ) : (
                               <div className="w-full h-full flex items-center justify-center">
-                                <PlatformIcon platform={post.platform} size="lg" />
+                                <PlatformIcon
+                                  platform={post.platform}
+                                  size="lg"
+                                />
                               </div>
                             )}
                           </div>
@@ -134,12 +168,14 @@ export default function FeedPreviewGrid({
                           <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center p-3">
                             <StatusBadge status={post.status} size="sm" />
                             <p className="text-white text-xs text-center mt-2 line-clamp-3">
-                              {post.caption || 'No caption'}
+                              {post.caption || "No caption"}
                             </p>
+
                             {!isReadOnly && (
                               <div
                                 {...provided.dragHandleProps}
                                 className="absolute top-2 left-2 p-1 bg-white/20 rounded"
+                                onClick={(e) => e.stopPropagation()}
                               >
                                 <GripVertical className="w-4 h-4 text-white" />
                               </div>
@@ -153,6 +189,7 @@ export default function FeedPreviewGrid({
                             <div
                               {...provided.dragHandleProps}
                               className="flex items-center"
+                              onClick={(e) => e.stopPropagation()}
                             >
                               <GripVertical className="w-5 h-5 text-slate-400" />
                             </div>
@@ -160,14 +197,17 @@ export default function FeedPreviewGrid({
 
                           <div className="w-20 h-28 rounded-lg overflow-hidden bg-slate-100 flex-shrink-0">
                             {post.asset_urls?.[0] ? (
-                              post.asset_types?.[0] === 'video' ? (
+                              post.asset_types?.[0] === "video" ? (
                                 <div className="relative w-full h-full">
                                   <video
                                     src={post.asset_urls[0]}
                                     className="w-full h-full object-cover"
                                   />
                                   <div className="absolute inset-0 flex items-center justify-center bg-black/20">
-                                    <Play className="w-6 h-6 text-white" fill="white" />
+                                    <Play
+                                      className="w-6 h-6 text-white"
+                                      fill="white"
+                                    />
                                   </div>
                                 </div>
                               ) : (
@@ -192,7 +232,7 @@ export default function FeedPreviewGrid({
                               <StatusBadge status={post.status} size="sm" />
                             </div>
                             <p className="text-sm text-slate-600 line-clamp-2">
-                              {post.caption || 'No caption'}
+                              {post.caption || "No caption"}
                             </p>
                             {post.scheduled_date && (
                               <p className="text-xs text-slate-400 mt-1">
