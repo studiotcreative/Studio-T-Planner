@@ -1,19 +1,18 @@
-import React, { useState, useEffect } from 'react';
+// src/Layout.jsx
+import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { createPageUrl } from './utils';
-import { base44 } from '@/api/base44Client';
+import { supabase } from '@/api/supabaseClient';
 import { useQuery } from '@tanstack/react-query';
-import { 
-  Calendar, 
-  LayoutGrid, 
-  Settings, 
-  Users, 
+import {
+  Calendar,
+  LayoutGrid,
+  Settings,
+  Users,
   Building2,
   ChevronDown,
   Menu,
-  X,
   LogOut,
-  Bell,
   Sparkles
 } from 'lucide-react';
 import { Button } from "@/components/ui/button";
@@ -30,14 +29,31 @@ import { AuthProvider, useAuth } from '@/components/auth/AuthProvider';
 import { Skeleton } from "@/components/ui/skeleton";
 
 function LayoutContent({ children, currentPageName }) {
-  const { user, userRole, loading, isAdmin, isClient, assignedAccounts, workspaceMemberships } = useAuth();
+  const { user, userRole, loading, isAdmin, isClient } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const { data: workspaces = [] } = useQuery({
     queryKey: ['workspaces'],
-    queryFn: () => base44.entities.Workspace.list(),
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('workspaces')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      return data ?? [];
+    },
     enabled: !loading && isAdmin()
   });
+
+  const handleSignOut = async () => {
+    try {
+      await supabase.auth.signOut();
+    } finally {
+      // Hard redirect to fully reset any stuck auth state
+      window.location.href = '/';
+    }
+  };
 
   if (loading) {
     return (
@@ -54,7 +70,7 @@ function LayoutContent({ children, currentPageName }) {
 
   const getNavItems = () => {
     const items = [];
-    
+
     if (isAdmin()) {
       items.push(
         { label: 'Dashboard', icon: LayoutGrid, href: createPageUrl('Dashboard') },
@@ -75,7 +91,7 @@ function LayoutContent({ children, currentPageName }) {
         { label: 'Calendar', icon: Calendar, href: createPageUrl('Calendar') }
       );
     }
-    
+
     return items;
   };
 
@@ -92,8 +108,8 @@ function LayoutContent({ children, currentPageName }) {
             to={item.href}
             onClick={() => setMobileOpen(false)}
             className={`flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm font-medium transition-all
-              ${isActive 
-                ? 'bg-slate-900 text-white' 
+              ${isActive
+                ? 'bg-slate-900 text-white'
                 : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
               }`}
           >
@@ -119,7 +135,7 @@ function LayoutContent({ children, currentPageName }) {
                 </div>
                 <span className="font-semibold text-lg text-slate-900 hidden sm:block">Studio T</span>
               </Link>
-              
+
               {/* Desktop Nav */}
               <div className="hidden lg:block">
                 <NavLinks />
@@ -150,13 +166,15 @@ function LayoutContent({ children, currentPageName }) {
                     <ChevronDown className="w-4 h-4 text-slate-400" />
                   </Button>
                 </DropdownMenuTrigger>
+
                 <DropdownMenuContent align="end" className="w-56">
                   <div className="px-3 py-2">
                     <p className="text-sm font-medium text-slate-900">{user?.full_name}</p>
                     <p className="text-xs text-slate-500">{user?.email}</p>
                   </div>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={() => base44.auth.logout()} className="text-red-600">
+
+                  <DropdownMenuItem onClick={handleSignOut} className="text-red-600">
                     <LogOut className="w-4 h-4 mr-2" />
                     Sign out
                   </DropdownMenuItem>
