@@ -1,42 +1,40 @@
+// src/lib/NavigationTracker.jsx
 import { useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
-import { useAuth } from './AuthContext';
-import { base44 } from '@/api/base44Client';
 import { pagesConfig } from '@/pages.config';
 
+/**
+ * NavigationTracker (Base44 replacement)
+ * - Base44 had appLogs.logUserInApp(pageName)
+ * - For migration stability, we intentionally do NOTHING here.
+ * - Later we can add Supabase logging to an `app_logs` table if you want.
+ */
 export default function NavigationTracker() {
-    const location = useLocation();
-    const { isAuthenticated } = useAuth();
-    const { Pages, mainPage } = pagesConfig;
-    const mainPageKey = mainPage ?? Object.keys(Pages)[0];
+  const location = useLocation();
+  const { Pages, mainPage } = pagesConfig;
+  const mainPageKey = mainPage ?? Object.keys(Pages)[0];
 
-    // Log user activity when navigating to a page
-    useEffect(() => {
-        // Extract page name from pathname
-        const pathname = location.pathname;
-        let pageName;
+  useEffect(() => {
+    // Keep pageName parsing in case we re-enable logging later
+    const pathname = location.pathname;
+    let pageName;
 
-        if (pathname === '/' || pathname === '') {
-            pageName = mainPageKey;
-        } else {
-            // Remove leading slash and get the first segment
-            const pathSegment = pathname.replace(/^\//, '').split('/')[0];
+    if (pathname === '/' || pathname === '') {
+      pageName = mainPageKey;
+    } else {
+      const pathSegment = pathname.replace(/^\//, '').split('/')[0];
 
-            // Try case-insensitive lookup in Pages config
-            const pageKeys = Object.keys(Pages);
-            const matchedKey = pageKeys.find(
-                key => key.toLowerCase() === pathSegment.toLowerCase()
-            );
+      const pageKeys = Object.keys(Pages);
+      const matchedKey = pageKeys.find(
+        (key) => key.toLowerCase() === pathSegment.toLowerCase()
+      );
 
-            pageName = matchedKey || null;
-        }
+      pageName = matchedKey || null;
+    }
 
-        if (isAuthenticated && pageName) {
-            base44.appLogs.logUserInApp(pageName).catch(() => {
-                // Silently fail - logging shouldn't break the app
-            });
-        }
-    }, [location, isAuthenticated, Pages, mainPageKey]);
+    // NO-OP (tracking disabled during migration)
+    void pageName;
+  }, [location, Pages, mainPageKey]);
 
-    return null;
+  return null;
 }
