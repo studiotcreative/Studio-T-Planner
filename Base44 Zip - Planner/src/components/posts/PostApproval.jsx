@@ -1,18 +1,19 @@
+// src/components/posts/PostApproval.jsx
 import React, { useState } from 'react';
-import { base44 } from '@/api/base44Client';
+import { supabase } from '@/api/supabaseClient';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/components/auth/AuthProvider';
 import { format, parseISO } from 'date-fns';
-import { 
-  CheckCircle2, 
-  XCircle, 
+import {
+  CheckCircle2,
+  XCircle,
   MessageSquare,
   AlertCircle,
-  Loader2 
+  Loader2
 } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { 
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -28,73 +29,118 @@ export default function PostApproval({ post, onUpdate }) {
   const [showRejectDialog, setShowRejectDialog] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
 
+  const safeInsertAuditLog = async (action, details) => {
+    try {
+      const { error } = await supabase.from('audit_logs').insert({
+        workspace_id: post.workspace_id,
+        entity_type: 'post',
+        entity_id: post.id,
+        action,
+        actor_user_id: user?.id ?? null,
+        actor_email: user?.email ?? null,
+        actor_name: user?.full_name ?? null,
+        details: JSON.stringify(details),
+        created_at: new Date().toISOString()
+      });
+
+      if (error) console.warn('[audit_logs] insert failed:', error.message);
+    } catch (e) {
+      console.warn('[audit_logs] skipped:', e?.message);
+    }
+  };
+
   const updateMutation = useMutation({
-    mutationFn: (data) => base44.entities.Post.update(post.id, data),
+    mutationFn: async (data) => {
+      const { error } = await supabase
+        .from('posts')
+        .update(data)
+        .eq('id', post.id);
+
+      if (error) throw error;
+      return true;
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['posts'] });
+      queryClient.invalidateQueries({ queryKey: ['post', post.id] });
       toast.success('Post updated');
       onUpdate?.();
+    },
+    onError: (e) => {
+      console.error(e);
+      toast.error('Failed to update post');
     }
   });
 
   const createComment = useMutation({
-    mutationFn: (data) => base44.entities.Comment.create(data),
+    mutationFn: async (data) => {
+      const { error } = await supabase
+        .from('comments')
+        .insert(data);
+
+      if (error) throw error;
+      return true;
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['comments', post.id] });
+    },
+    onError: (e) => {
+      console.error(e);
+      toast.error('Failed to add comment');
     }
   });
 
-  const createAuditLog = async (action, details) => {
-    await base44.entities.AuditLog.create({
-      workspace_id: post.workspace_id,
-      entity_type: 'post',
-      entity_id: post.id,
-      action,
-      actor_email: user.email,
-      actor_name: user.full_name,
-      details: JSON.stringify(details)
-    });
-  };
-
   const handleApprove = async () => {
+    if (!user?.id) {
+      toast.error('You must be logged in.');
+      return;
+    }
+
     await updateMutation.mutateAsync({
       status: 'approved',
       approval_status: 'approved',
-      approved_by: user.email,
+      approved_by: user.id,                 // if your schema expects email/text, tell me
+      approved_by_email: user.email ?? null, // harmless if column doesn't exist? (will error if it doesn't)
       approved_at: new Date().toISOString()
-    });
-    
-    await createAuditLog('approved', { 
+    }).catch(() => {});
+
+    await safeInsertAuditLog('approved', {
       action: 'Post approved',
-      approved_by: user.full_name 
+      approved_by: user.full_name
     });
-    
+
     toast.success('Post approved!');
   };
 
   const handleRequestChanges = async () => {
+    if (!user?.id) {
+      toast.error('You must be logged in.');
+      return;
+    }
+
     await updateMutation.mutateAsync({
       status: 'sent_to_client',
       approval_status: 'changes_requested'
-    });
+    }).catch(() => {});
 
-    if (rejectReason) {
+    if (rejectReason?.trim()) {
       await createComment.mutateAsync({
         post_id: post.id,
         workspace_id: post.workspace_id,
-        author_email: user.email,
-        author_name: user.full_name,
+        author_user_id: user.id,          // remove if your comments table doesn't have it
+        author_email: user.email ?? null,
+        author_name: user.full_name ?? null,
         content: `Changes requested: ${rejectReason}`,
-        is_internal: false
-      });
+        is_internal: false,
+        is_resolved: false
+      }).catch(() => {});
     }
 
-    await createAuditLog('rejected', { 
+    await safeInsertAuditLog('changes_requested', {
       action: 'Changes requested',
       reason: rejectReason,
-      rejected_by: user.full_name 
+      rejected_by: user.full_name
     });
-    
+
     setShowRejectDialog(false);
     setRejectReason('');
     toast.info('Changes requested');
@@ -105,7 +151,7 @@ export default function PostApproval({ post, onUpdate }) {
     return null;
   }
 
-  // Already approved/rejected
+  // Already approved
   if (post.approval_status === 'approved') {
     return (
       <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4">
@@ -114,7 +160,8 @@ export default function PostApproval({ post, onUpdate }) {
           <div>
             <p className="font-medium text-emerald-800">Approved</p>
             <p className="text-sm text-emerald-600">
-              by {post.approved_by} on {format(parseISO(post.approved_at), 'MMM d, yyyy')}
+              by {post.approved_by_email || post.approved_by || 'Unknown'}{' '}
+              {post.approved_at ? `on ${format(parseISO(post.approved_at), 'MMM d, yyyy')}` : ''}
             </p>
           </div>
         </div>
@@ -200,7 +247,7 @@ export default function PostApproval({ post, onUpdate }) {
             <Button variant="outline" onClick={() => setShowRejectDialog(false)}>
               Cancel
             </Button>
-            <Button 
+            <Button
               onClick={handleRequestChanges}
               disabled={updateMutation.isPending}
               className="bg-amber-600 hover:bg-amber-700"
