@@ -1,56 +1,77 @@
-import React, { useState } from 'react';
-import { base44 } from '@/api/base44Client';
-import { useQuery } from '@tanstack/react-query';
-import { useAuth } from '@/components/auth/AuthProvider';
-import { 
-  Search,
-  UserPlus,
-  Shield,
-  Users,
-  Briefcase
-} from 'lucide-react';
-import { Button } from "@/components/ui/button";
+// src/pages/Team.jsx
+import React, { useState } from "react";
+import { supabase } from "@/api/supabaseClient";
+import { useQuery } from "@tanstack/react-query";
+import { useAuth } from "@/components/auth/AuthProvider";
+import { Search, Shield, Users, Briefcase } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import PlatformIcon from '@/components/ui/PlatformIcon';
+import PlatformIcon from "@/components/ui/PlatformIcon";
 
 export default function Team() {
   const { isAdmin } = useAuth();
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState("");
 
   const { data: users = [], isLoading: loadingUsers } = useQuery({
-    queryKey: ['users'],
-    queryFn: () => base44.entities.User.list()
+    queryKey: ["profiles"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("id, full_name, role, email")
+        .order("full_name", { ascending: true });
+
+      if (error) throw error;
+      return data ?? [];
+    },
   });
 
   const { data: accounts = [] } = useQuery({
-    queryKey: ['accounts'],
-    queryFn: () => base44.entities.SocialAccount.list()
+    queryKey: ["accounts"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("social_accounts")
+        .select("id, platform, handle, assigned_manager_email")
+        .order("created_at", { ascending: true });
+
+      if (error) throw error;
+      return data ?? [];
+    },
   });
 
   const { data: workspaces = [] } = useQuery({
-    queryKey: ['workspaces'],
-    queryFn: () => base44.entities.Workspace.list()
+    queryKey: ["workspaces"],
+    queryFn: async () => {
+      const { data, error } = await supabase.from("workspaces").select("id");
+      if (error) throw error;
+      return data ?? [];
+    },
   });
 
-  const filteredUsers = users.filter(u => 
-    u.full_name?.toLowerCase().includes(search.toLowerCase()) ||
-    u.email.toLowerCase().includes(search.toLowerCase())
-  );
+  const filteredUsers = users.filter((u) => {
+    const name = (u.full_name ?? "").toLowerCase();
+    const email = (u.email ?? "").toLowerCase();
+    const q = search.toLowerCase();
+    return name.includes(q) || email.includes(q);
+  });
 
-  const getInitials = (name) => {
-    return name?.split(' ').map(n => n[0]).join('').toUpperCase() || '?';
+  const getInitials = (nameOrEmail) => {
+    const s = (nameOrEmail ?? "").trim();
+    if (!s) return "?";
+    const parts = s.split(" ");
+    if (parts.length === 1) return parts[0][0]?.toUpperCase() ?? "?";
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
   };
 
   const getAssignedAccounts = (email) => {
-    return accounts.filter(a => a.assigned_manager_email === email);
+    if (!email) return [];
+    return accounts.filter((a) => a.assigned_manager_email === email);
   };
 
   const getRoleBadge = (role) => {
-    if (role === 'admin') {
+    if (role === "admin") {
       return <Badge className="bg-violet-100 text-violet-700">Admin</Badge>;
     }
     return <Badge className="bg-slate-100 text-slate-700">User</Badge>;
@@ -59,10 +80,17 @@ export default function Team() {
   if (!isAdmin()) {
     return (
       <div className="max-w-[1200px] mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <p className="text-center text-slate-500">You don't have access to this page.</p>
+        <p className="text-center text-slate-500">
+          You don't have access to this page.
+        </p>
       </div>
     );
   }
+
+  const adminCount = users.filter((u) => u.role === "admin").length;
+  const accountManagerCount = new Set(
+    accounts.map((a) => a.assigned_manager_email).filter(Boolean)
+  ).size;
 
   return (
     <div className="max-w-[1200px] mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -70,9 +98,7 @@ export default function Team() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Team</h1>
-          <p className="text-slate-500 mt-1">
-            {users.length} team members
-          </p>
+          <p className="text-slate-500 mt-1">{users.length} team members</p>
         </div>
       </div>
 
@@ -108,9 +134,7 @@ export default function Team() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-slate-500">Admins</p>
-                <p className="text-2xl font-bold text-slate-900">
-                  {users.filter(u => u.role === 'admin').length}
-                </p>
+                <p className="text-2xl font-bold text-slate-900">{adminCount}</p>
               </div>
               <div className="w-10 h-10 rounded-xl bg-violet-100 flex items-center justify-center">
                 <Shield className="w-5 h-5 text-violet-600" />
@@ -125,7 +149,7 @@ export default function Team() {
               <div>
                 <p className="text-sm text-slate-500">Account Managers</p>
                 <p className="text-2xl font-bold text-slate-900">
-                  {new Set(accounts.map(a => a.assigned_manager_email)).size}
+                  {accountManagerCount}
                 </p>
               </div>
               <div className="w-10 h-10 rounded-xl bg-blue-100 flex items-center justify-center">
@@ -153,36 +177,33 @@ export default function Team() {
       {/* Team List */}
       {loadingUsers ? (
         <div className="space-y-4">
-          {[1, 2, 3].map(i => (
+          {[1, 2, 3].map((i) => (
             <Skeleton key={i} className="h-24" />
           ))}
         </div>
       ) : (
         <div className="bg-white rounded-xl border border-slate-200/60 overflow-hidden">
           <div className="divide-y divide-slate-100">
-            {filteredUsers.map(user => {
+            {filteredUsers.map((user) => {
               const assignedAccounts = getAssignedAccounts(user.email);
-              
+
               return (
-                <div 
-                  key={user.id}
-                  className="p-4 hover:bg-slate-50 transition-colors"
-                >
+                <div key={user.id} className="p-4 hover:bg-slate-50 transition-colors">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-4">
                       <Avatar className="w-12 h-12">
                         <AvatarFallback className="bg-gradient-to-br from-violet-500 to-indigo-500 text-white font-medium">
-                          {getInitials(user.full_name)}
+                          {getInitials(user.full_name || user.email)}
                         </AvatarFallback>
                       </Avatar>
                       <div>
                         <div className="flex items-center gap-2">
                           <h3 className="font-medium text-slate-900">
-                            {user.full_name || 'No name'}
+                            {user.full_name || "No name"}
                           </h3>
                           {getRoleBadge(user.role)}
                         </div>
-                        <p className="text-sm text-slate-500">{user.email}</p>
+                        <p className="text-sm text-slate-500">{user.email || ""}</p>
                       </div>
                     </div>
 
@@ -191,8 +212,8 @@ export default function Team() {
                         <span className="text-sm text-slate-500 mr-2">
                           Assigned accounts:
                         </span>
-                        {assignedAccounts.slice(0, 3).map(account => (
-                          <div 
+                        {assignedAccounts.slice(0, 3).map((account) => (
+                          <div
                             key={account.id}
                             className="flex items-center gap-1 px-2 py-1 bg-slate-100 rounded-full text-xs"
                           >
@@ -212,8 +233,8 @@ export default function Team() {
                   {/* Mobile: Assigned accounts */}
                   {assignedAccounts.length > 0 && (
                     <div className="md:hidden flex flex-wrap gap-2 mt-3 pt-3 border-t border-slate-100">
-                      {assignedAccounts.map(account => (
-                        <div 
+                      {assignedAccounts.map((account) => (
+                        <div
                           key={account.id}
                           className="flex items-center gap-1 px-2 py-1 bg-slate-100 rounded-full text-xs"
                         >
