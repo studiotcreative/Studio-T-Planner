@@ -1,20 +1,20 @@
-import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
-import { createPageUrl } from '@/utils';
-import { base44 } from '@/api/base44Client';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useAuth } from '@/components/auth/AuthProvider';
-import { 
-  Plus, 
-  Building2, 
+import React, { useState, useMemo } from "react";
+import { Link } from "react-router-dom";
+import { createPageUrl } from "@/utils";
+import { supabase } from "@/api/supabaseClient";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useAuth } from "@/components/auth/AuthProvider";
+import {
+  Plus,
+  Building2,
   Users,
   MoreVertical,
   Pencil,
   Trash2,
   Search,
   ExternalLink,
-  Loader2
-} from 'lucide-react';
+  Loader2,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -37,95 +37,179 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
-import PlatformIcon from '@/components/ui/PlatformIcon';
+import PlatformIcon from "@/components/ui/PlatformIcon";
+
+const slugify = (s) =>
+  (s || "")
+    .toLowerCase()
+    .trim()
+    .replace(/[^\w\s-]/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-");
 
 export default function Workspaces() {
-  const { isAdmin } = useAuth();
+  const { isAdmin, loading } = useAuth();
   const queryClient = useQueryClient();
-  const [search, setSearch] = useState('');
+
+  const [search, setSearch] = useState("");
   const [showDialog, setShowDialog] = useState(false);
   const [editingWorkspace, setEditingWorkspace] = useState(null);
-  const [formData, setFormData] = useState({ name: '', slug: '', notes: '' });
+  const [formData, setFormData] = useState({ name: "", slug: "", notes: "" });
 
-  const { data: workspaces = [], isLoading } = useQuery({
-    queryKey: ['workspaces'],
-    queryFn: () => base44.entities.Workspace.list()
+  // ---- Queries ----
+  const { data: workspaces = [], isLoading: loadingWorkspaces } = useQuery({
+    queryKey: ["workspaces"],
+    enabled: !loading && isAdmin(),
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("workspaces")
+        .select("*")
+        .order("created_at", { ascending: false });
+
+      if (error) throw error;
+      return data ?? [];
+    },
   });
 
   const { data: accounts = [] } = useQuery({
-    queryKey: ['accounts'],
-    queryFn: () => base44.entities.SocialAccount.list()
+    queryKey: ["accounts"],
+    enabled: !loading && isAdmin(),
+    queryFn: async () => {
+      const { data, error } = await supabase.from("social_accounts").select("*");
+      if (error) throw error;
+      return data ?? [];
+    },
   });
 
   const { data: members = [] } = useQuery({
-    queryKey: ['members'],
-    queryFn: () => base44.entities.WorkspaceMember.list()
+    queryKey: ["members"],
+    enabled: !loading && isAdmin(),
+    queryFn: async () => {
+      const { data, error } = await supabase.from("workspace_members").select("*");
+      if (error) throw error;
+      return data ?? [];
+    },
   });
 
+  // ---- Mutations ----
   const createMutation = useMutation({
-    mutationFn: (data) => base44.entities.Workspace.create(data),
+    mutationFn: async (payload) => {
+      const { data: userRes } = await supabase.auth.getUser();
+      const userId = userRes?.user?.id ?? null;
+
+      const { error } = await supabase.from("workspaces").insert([
+        {
+          name: payload.name,
+          slug: payload.slug,
+          notes: payload.notes || null,
+          is_active: true,
+          created_by: userId,
+        },
+      ]);
+
+      if (error) throw error;
+    },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['workspaces'] });
+      queryClient.invalidateQueries({ queryKey: ["workspaces"] });
       setShowDialog(false);
       resetForm();
-      toast.success('Workspace created');
-    }
+      toast.success("Workspace created");
+    },
+    onError: (err) => {
+      toast.error(err?.message || "Failed to create workspace");
+    },
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }) => base44.entities.Workspace.update(id, data),
+    mutationFn: async ({ id, data }) => {
+      const { error } = await supabase
+        .from("workspaces")
+        .update({
+          name: data.name,
+          slug: data.slug,
+          notes: data.notes || null,
+        })
+        .eq("id", id);
+
+      if (error) throw error;
+    },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['workspaces'] });
+      queryClient.invalidateQueries({ queryKey: ["workspaces"] });
       setShowDialog(false);
       resetForm();
-      toast.success('Workspace updated');
-    }
+      toast.success("Workspace updated");
+    },
+    onError: (err) => {
+      toast.error(err?.message || "Failed to update workspace");
+    },
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id) => base44.entities.Workspace.delete(id),
+    mutationFn: async (id) => {
+      const { error } = await supabase.from("workspaces").delete().eq("id", id);
+      if (error) throw error;
+    },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['workspaces'] });
-      toast.success('Workspace deleted');
-    }
+      queryClient.invalidateQueries({ queryKey: ["workspaces"] });
+      toast.success("Workspace deleted");
+    },
+    onError: (err) => {
+      toast.error(err?.message || "Failed to delete workspace");
+    },
   });
 
   const toggleActiveMutation = useMutation({
-    mutationFn: ({ id, is_active }) => base44.entities.Workspace.update(id, { is_active }),
+    mutationFn: async ({ id, is_active }) => {
+      const { error } = await supabase
+        .from("workspaces")
+        .update({ is_active })
+        .eq("id", id);
+
+      if (error) throw error;
+    },
     onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ['workspaces'] });
-      toast.success(variables.is_active ? 'Workspace activated' : 'Workspace archived');
-    }
+      queryClient.invalidateQueries({ queryKey: ["workspaces"] });
+      toast.success(variables.is_active ? "Workspace activated" : "Workspace archived");
+    },
+    onError: (err) => {
+      toast.error(err?.message || "Failed to update status");
+    },
   });
 
+  // ---- Helpers ----
   const resetForm = () => {
     setEditingWorkspace(null);
-    setFormData({ name: '', slug: '', notes: '' });
+    setFormData({ name: "", slug: "", notes: "" });
   };
 
   const openEditDialog = (workspace) => {
     setEditingWorkspace(workspace);
     setFormData({
-      name: workspace.name,
-      slug: workspace.slug,
-      notes: workspace.notes || ''
+      name: workspace.name ?? "",
+      slug: workspace.slug ?? "",
+      notes: workspace.notes ?? "",
     });
     setShowDialog(true);
   };
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (!formData.name) {
-      toast.error('Please enter a workspace name');
+
+    const name = (formData.name || "").trim();
+    if (!name) {
+      toast.error("Please enter a workspace name");
       return;
     }
 
-    const slug = formData.slug || formData.name.toLowerCase().replace(/\s+/g, '-');
+    const slug = (formData.slug || "").trim() || slugify(name);
 
     if (editingWorkspace) {
-      updateMutation.mutate({ id: editingWorkspace.id, data: { ...formData, slug } });
+      updateMutation.mutate({
+        id: editingWorkspace.id,
+        data: { ...formData, name, slug },
+      });
     } else {
-      createMutation.mutate({ ...formData, slug });
+      createMutation.mutate({ ...formData, name, slug });
     }
   };
 
@@ -135,15 +219,32 @@ export default function Workspaces() {
     }
   };
 
-  const filteredWorkspaces = workspaces.filter(w => 
-    w.name.toLowerCase().includes(search.toLowerCase())
-  );
+  const filteredWorkspaces = useMemo(() => {
+    const q = search.toLowerCase().trim();
+    if (!q) return workspaces;
+    return workspaces.filter((w) => (w.name || "").toLowerCase().includes(q));
+  }, [workspaces, search]);
 
   const getWorkspaceStats = (workspaceId) => {
-    const workspaceAccounts = accounts.filter(a => a.workspace_id === workspaceId);
-    const workspaceMembers = members.filter(m => m.workspace_id === workspaceId);
+    const workspaceAccounts = accounts.filter((a) => a.workspace_id === workspaceId);
+    const workspaceMembers = members.filter((m) => m.workspace_id === workspaceId);
     return { accounts: workspaceAccounts.length, members: workspaceMembers.length };
   };
+
+  // ---- Guards ----
+  if (loading) {
+    return (
+      <div className="max-w-[1200px] mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <Skeleton className="h-8 w-48 mb-6" />
+        <Skeleton className="h-10 w-full mb-6" />
+        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {[1, 2, 3].map((i) => (
+            <Skeleton key={i} className="h-48" />
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   if (!isAdmin()) {
     return (
@@ -153,17 +254,16 @@ export default function Workspaces() {
     );
   }
 
+  // ---- UI ----
   return (
     <div className="max-w-[1200px] mx-auto px-4 sm:px-6 lg:px-8 py-8">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Workspaces</h1>
-          <p className="text-slate-500 mt-1">
-            Manage client workspaces and social accounts
-          </p>
+          <p className="text-slate-500 mt-1">Manage client workspaces and social accounts</p>
         </div>
-        <Button 
+        <Button
           className="bg-slate-900 hover:bg-slate-800"
           onClick={() => {
             resetForm();
@@ -187,9 +287,9 @@ export default function Workspaces() {
       </div>
 
       {/* Workspaces Grid */}
-      {isLoading ? (
+      {loadingWorkspaces ? (
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {[1, 2, 3].map(i => (
+          {[1, 2, 3].map((i) => (
             <Skeleton key={i} className="h-48" />
           ))}
         </div>
@@ -198,8 +298,8 @@ export default function Workspaces() {
           <CardContent className="py-16 text-center">
             <Building2 className="w-12 h-12 text-slate-300 mx-auto mb-4" />
             <p className="text-slate-500">No workspaces found</p>
-            <Button 
-              variant="outline" 
+            <Button
+              variant="outline"
               className="mt-4"
               onClick={() => {
                 resetForm();
@@ -213,22 +313,26 @@ export default function Workspaces() {
         </Card>
       ) : (
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredWorkspaces.map(workspace => {
+          {filteredWorkspaces.map((workspace) => {
             const stats = getWorkspaceStats(workspace.id);
-            const workspaceAccounts = accounts.filter(a => a.workspace_id === workspace.id);
-            
+            const workspaceAccounts = accounts.filter((a) => a.workspace_id === workspace.id);
+
             return (
-              <Card key={workspace.id} className="bg-white border-slate-200/60 hover:border-slate-300 transition-colors">
+              <Card
+                key={workspace.id}
+                className="bg-white border-slate-200/60 hover:border-slate-300 transition-colors"
+              >
                 <CardHeader className="flex flex-row items-start justify-between pb-2">
                   <div className="flex items-center gap-3">
                     <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-violet-500 to-indigo-500 flex items-center justify-center text-white font-semibold text-lg">
-                      {workspace.name[0].toUpperCase()}
+                      {(workspace.name || "?")[0].toUpperCase()}
                     </div>
                     <div>
                       <CardTitle className="text-lg">{workspace.name}</CardTitle>
                       <p className="text-sm text-slate-500">/{workspace.slug}</p>
                     </div>
                   </div>
+
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button variant="ghost" size="icon">
@@ -240,30 +344,31 @@ export default function Workspaces() {
                         <Pencil className="w-4 h-4 mr-2" />
                         Edit
                       </DropdownMenuItem>
+
                       <Link to={createPageUrl(`WorkspaceDetails?id=${workspace.id}`)}>
                         <DropdownMenuItem>
                           <ExternalLink className="w-4 h-4 mr-2" />
                           View Details
                         </DropdownMenuItem>
                       </Link>
+
                       <DropdownMenuSeparator />
-                      <DropdownMenuItem 
-                        className="text-red-600"
-                        onClick={() => handleDelete(workspace)}
-                      >
+
+                      <DropdownMenuItem className="text-red-600" onClick={() => handleDelete(workspace)}>
                         <Trash2 className="w-4 h-4 mr-2" />
                         Delete
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </CardHeader>
+
                 <CardContent>
                   {/* Status Toggle */}
                   <div className="flex items-center justify-between mb-4 pb-4 border-b border-slate-200">
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-medium text-slate-700">Status:</span>
-                      <span className={`text-sm ${workspace.is_active ? 'text-green-600' : 'text-slate-400'}`}>
-                        {workspace.is_active ? 'Active' : 'Archived'}
+                      <span className={`text-sm ${workspace.is_active ? "text-green-600" : "text-slate-400"}`}>
+                        {workspace.is_active ? "Active" : "Archived"}
                       </span>
                     </div>
                     <Switch
@@ -287,8 +392,8 @@ export default function Workspaces() {
 
                   {/* Accounts */}
                   <div className="flex flex-wrap gap-2">
-                    {workspaceAccounts.slice(0, 4).map(account => (
-                      <div 
+                    {workspaceAccounts.slice(0, 4).map((account) => (
+                      <div
                         key={account.id}
                         className="flex items-center gap-1.5 px-2 py-1 bg-slate-100 rounded-full text-xs"
                       >
@@ -319,59 +424,53 @@ export default function Workspaces() {
       <Dialog open={showDialog} onOpenChange={setShowDialog}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>
-              {editingWorkspace ? 'Edit Workspace' : 'New Workspace'}
-            </DialogTitle>
+            <DialogTitle>{editingWorkspace ? "Edit Workspace" : "New Workspace"}</DialogTitle>
             <DialogDescription>
-              {editingWorkspace 
-                ? 'Update workspace details'
-                : 'Create a new client workspace'
-              }
+              {editingWorkspace ? "Update workspace details" : "Create a new client workspace"}
             </DialogDescription>
           </DialogHeader>
+
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <Label>Workspace Name</Label>
               <Input
                 value={formData.name}
-                onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
+                onChange={(e) => setFormData((prev) => ({ ...prev, name: e.target.value }))}
                 placeholder="e.g., Acme Corp"
                 className="mt-1.5"
               />
             </div>
+
             <div>
               <Label>URL Slug</Label>
               <Input
                 value={formData.slug}
-                onChange={(e) => setFormData(prev => ({ ...prev, slug: e.target.value }))}
+                onChange={(e) => setFormData((prev) => ({ ...prev, slug: e.target.value }))}
                 placeholder="e.g., acme-corp"
                 className="mt-1.5"
               />
-              <p className="text-xs text-slate-500 mt-1">
-                Leave blank to auto-generate from name
-              </p>
+              <p className="text-xs text-slate-500 mt-1">Leave blank to auto-generate from name</p>
             </div>
+
             <div>
               <Label>Notes (Optional)</Label>
               <Input
                 value={formData.notes}
-                onChange={(e) => setFormData(prev => ({ ...prev, notes: e.target.value }))}
+                onChange={(e) => setFormData((prev) => ({ ...prev, notes: e.target.value }))}
                 placeholder="Internal notes about this client"
                 className="mt-1.5"
               />
             </div>
+
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setShowDialog(false)}>
                 Cancel
               </Button>
-              <Button 
-                type="submit" 
-                disabled={createMutation.isPending || updateMutation.isPending}
-              >
+              <Button type="submit" disabled={createMutation.isPending || updateMutation.isPending}>
                 {(createMutation.isPending || updateMutation.isPending) && (
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                 )}
-                {editingWorkspace ? 'Update' : 'Create'}
+                {editingWorkspace ? "Update" : "Create"}
               </Button>
             </DialogFooter>
           </form>
