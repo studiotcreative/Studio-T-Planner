@@ -1,72 +1,98 @@
-import React, { useState, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { createPageUrl } from '@/utils';
-import { base44 } from '@/api/base44Client';
-import { useQuery } from '@tanstack/react-query';
-import { useAuth } from '@/components/auth/AuthProvider';
-import { LayoutGrid, Calendar as CalendarIcon, Loader2 } from 'lucide-react';
+import React, { useState, useMemo } from "react";
+import { useNavigate } from "react-router-dom";
+import { createPageUrl } from "@/utils";
+import { supabase } from "@/api/supabaseClient";
+import { useQuery } from "@tanstack/react-query";
+import { useAuth } from "@/components/auth/AuthProvider";
+import { LayoutGrid, Calendar as CalendarIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { 
-  Select, 
-  SelectContent, 
-  SelectItem, 
-  SelectTrigger, 
-  SelectValue 
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import CalendarView from '@/components/calendar/CalendarView';
-import PlatformIcon from '@/components/ui/PlatformIcon';
+import CalendarView from "@/components/calendar/CalendarView";
+import PlatformIcon from "@/components/ui/PlatformIcon";
 
 export default function ClientCalendar() {
   const navigate = useNavigate();
-  const { user, workspaceMemberships, loading } = useAuth();
-  const [selectedPlatform, setSelectedPlatform] = useState('all');
-  const [selectedAccount, setSelectedAccount] = useState('all');
+  const { workspaceMemberships, loading } = useAuth();
+
+  const [selectedPlatform, setSelectedPlatform] = useState("all");
+  const [selectedAccount, setSelectedAccount] = useState("all");
 
   // Get client's workspace ID
   const clientWorkspaceId = useMemo(() => {
-    const membership = workspaceMemberships.find(m => 
-      m.role === 'client_viewer' || m.role === 'client_approver'
+    const membership = workspaceMemberships.find(
+      (m) => m.role === "client_viewer" || m.role === "client_approver"
     );
-    return membership?.workspace_id;
+    return membership?.workspace_id ?? null;
   }, [workspaceMemberships]);
 
   const { data: workspace, isLoading: loadingWorkspace } = useQuery({
-    queryKey: ['client-workspace', clientWorkspaceId],
-    queryFn: () => base44.entities.Workspace.filter({ id: clientWorkspaceId }).then(r => r[0]),
-    enabled: !!clientWorkspaceId
+    queryKey: ["client-workspace", clientWorkspaceId],
+    enabled: !!clientWorkspaceId,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("workspaces")
+        .select("*")
+        .eq("id", clientWorkspaceId)
+        .single();
+
+      if (error) throw error;
+      return data;
+    },
   });
 
   const { data: accounts = [], isLoading: loadingAccounts } = useQuery({
-    queryKey: ['client-accounts', clientWorkspaceId],
-    queryFn: () => base44.entities.SocialAccount.filter({ workspace_id: clientWorkspaceId }),
-    enabled: !!clientWorkspaceId
+    queryKey: ["client-accounts", clientWorkspaceId],
+    enabled: !!clientWorkspaceId,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("social_accounts")
+        .select("*")
+        .eq("workspace_id", clientWorkspaceId);
+
+      if (error) throw error;
+      return data ?? [];
+    },
   });
 
   const { data: allPosts = [], isLoading: loadingPosts } = useQuery({
-    queryKey: ['client-posts', clientWorkspaceId],
-    queryFn: () => base44.entities.Post.filter({ workspace_id: clientWorkspaceId }),
-    enabled: !!clientWorkspaceId
+    queryKey: ["client-posts", clientWorkspaceId],
+    enabled: !!clientWorkspaceId,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("posts")
+        .select("*")
+        .eq("workspace_id", clientWorkspaceId);
+
+      if (error) throw error;
+      return data ?? [];
+    },
   });
 
-  // Filter posts
+  // Filter posts (hide drafts from clients)
   const posts = useMemo(() => {
-    let filtered = allPosts.filter(p => p.status !== 'draft'); // Hide drafts from clients
-    
-    if (selectedPlatform !== 'all') {
-      filtered = filtered.filter(p => p.platform === selectedPlatform);
+    let filtered = (allPosts ?? []).filter((p) => p.status !== "draft");
+
+    if (selectedPlatform !== "all") {
+      filtered = filtered.filter((p) => p.platform === selectedPlatform);
     }
-    if (selectedAccount !== 'all') {
-      filtered = filtered.filter(p => p.social_account_id === selectedAccount);
+    if (selectedAccount !== "all") {
+      filtered = filtered.filter((p) => p.social_account_id === selectedAccount);
     }
-    
+
     return filtered;
   }, [allPosts, selectedPlatform, selectedAccount]);
 
-  // Filtered accounts
+  // Filtered accounts for dropdown
   const filteredAccounts = useMemo(() => {
-    if (selectedPlatform === 'all') return accounts;
-    return accounts.filter(a => a.platform === selectedPlatform);
+    if (selectedPlatform === "all") return accounts;
+    return accounts.filter((a) => a.platform === selectedPlatform);
   }, [accounts, selectedPlatform]);
 
   const handlePostClick = (post) => {
@@ -79,9 +105,11 @@ export default function ClientCalendar() {
     return (
       <div className="max-w-[1200px] mx-auto px-4 sm:px-6 lg:px-8 py-16 text-center">
         <CalendarIcon className="w-16 h-16 text-slate-300 mx-auto mb-4" />
-        <h2 className="text-xl font-semibold text-slate-700 mb-2">No Workspace Found</h2>
+        <h2 className="text-xl font-semibold text-slate-700 mb-2">
+          No Workspace Found
+        </h2>
         <p className="text-slate-500">
-          You don't have access to any workspace. Please contact your account manager.
+          You don&apos;t have access to any workspace. Please contact your account manager.
         </p>
       </div>
     );
@@ -101,10 +129,7 @@ export default function ClientCalendar() {
             <Skeleton className="h-8 w-48" />
           )}
         </div>
-        <Button 
-          variant="outline"
-          onClick={() => navigate(createPageUrl('ClientFeed'))}
-        >
+        <Button variant="outline" onClick={() => navigate(createPageUrl("ClientFeed"))}>
           <LayoutGrid className="w-4 h-4 mr-2" />
           Feed Preview
         </Button>
@@ -112,10 +137,13 @@ export default function ClientCalendar() {
 
       {/* Filters */}
       <div className="flex flex-wrap gap-3 mb-6">
-        <Select value={selectedPlatform} onValueChange={(v) => {
-          setSelectedPlatform(v);
-          setSelectedAccount('all');
-        }}>
+        <Select
+          value={selectedPlatform}
+          onValueChange={(v) => {
+            setSelectedPlatform(v);
+            setSelectedAccount("all");
+          }}
+        >
           <SelectTrigger className="w-[160px] bg-white">
             <SelectValue placeholder="All Platforms" />
           </SelectTrigger>
@@ -134,7 +162,7 @@ export default function ClientCalendar() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Accounts</SelectItem>
-            {filteredAccounts.map(a => (
+            {filteredAccounts.map((a) => (
               <SelectItem key={a.id} value={a.id}>
                 <div className="flex items-center gap-2">
                   <PlatformIcon platform={a.platform} size="sm" />
@@ -151,25 +179,25 @@ export default function ClientCalendar() {
         <div className="bg-white rounded-xl border border-slate-200/60 p-4">
           <p className="text-sm text-slate-500">Awaiting Your Approval</p>
           <p className="text-2xl font-bold text-blue-600 mt-1">
-            {posts.filter(p => p.status === 'sent_to_client').length}
+            {posts.filter((p) => p.status === "sent_to_client").length}
           </p>
         </div>
         <div className="bg-white rounded-xl border border-slate-200/60 p-4">
           <p className="text-sm text-slate-500">Approved</p>
           <p className="text-2xl font-bold text-emerald-600 mt-1">
-            {posts.filter(p => p.status === 'approved' || p.status === 'ready_to_post').length}
+            {posts.filter((p) => p.status === "approved" || p.status === "ready_to_post").length}
           </p>
         </div>
         <div className="bg-white rounded-xl border border-slate-200/60 p-4">
           <p className="text-sm text-slate-500">In Review</p>
           <p className="text-2xl font-bold text-amber-600 mt-1">
-            {posts.filter(p => p.status === 'internal_review').length}
+            {posts.filter((p) => p.status === "internal_review").length}
           </p>
         </div>
         <div className="bg-white rounded-xl border border-slate-200/60 p-4">
           <p className="text-sm text-slate-500">Posted</p>
           <p className="text-2xl font-bold text-green-600 mt-1">
-            {posts.filter(p => p.status === 'posted').length}
+            {posts.filter((p) => p.status === "posted").length}
           </p>
         </div>
       </div>
