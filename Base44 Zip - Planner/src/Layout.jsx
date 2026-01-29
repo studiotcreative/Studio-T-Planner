@@ -32,7 +32,7 @@ function LayoutContent({ children, currentPageName }) {
   const { user, userRole, loading, isAdmin, isClient } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  // Admin-only workspaces fetch
+  // Workspaces fetch (enabled for any logged-in user, to verify data access)
   const { data: workspaces = [] } = useQuery({
     queryKey: ["workspaces"],
     queryFn: async () => {
@@ -44,7 +44,8 @@ function LayoutContent({ children, currentPageName }) {
       if (error) throw error;
       return data ?? [];
     },
-    enabled: !loading && Boolean(user) && isAdmin(),
+    // ✅ Step 3 fix: do NOT gate this behind isAdmin() while debugging
+    enabled: !loading && Boolean(user),
   });
 
   const handleSignOut = async () => {
@@ -143,7 +144,7 @@ function LayoutContent({ children, currentPageName }) {
         }}
       >
         role: {String(userRole)} | isAdmin(): {String(isAdmin())} | email:{" "}
-        {String(user?.email)}
+        {String(user?.email)} | workspaces: {String(workspaces?.length ?? 0)}
       </div>
 
       {/* Header */}
@@ -242,3 +243,4 @@ export default function Layout({ children, currentPageName }) {
     </AuthProvider>
   );
 }
+
