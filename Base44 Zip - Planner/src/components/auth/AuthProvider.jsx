@@ -1,3 +1,4 @@
+console.log("AUTH_PROVIDER_VERSION = 2026-01-29-1");
 // src/components/auth/AuthProvider.jsx
 import React, { createContext, useContext, useEffect, useRef, useState } from "react";
 import { supabase } from "@/api/supabaseClient";
