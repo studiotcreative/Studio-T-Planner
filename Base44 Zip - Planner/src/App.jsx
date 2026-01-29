@@ -7,8 +7,12 @@ import { queryClientInstance } from "@/lib/query-client";
 import { pagesConfig } from "./pages.config";
 import PageNotFound from "./lib/PageNotFound";
 
-// ✅ Use Supabase AuthProvider + useAuth
+// ✅ Supabase auth
 import { AuthProvider, useAuth } from "@/components/auth/AuthProvider";
+
+// ✅ NEW: login + callback pages (you will create these files)
+import Login from "@/pages/Login";
+import AuthCallback from "@/pages/AuthCallback";
 
 // (Optional) Keep disabled if you’re still migrating it
 // import NavigationTracker from "@/lib/NavigationTracker";
@@ -19,20 +23,6 @@ const MainPage = mainPageKey ? Pages[mainPageKey] : <></>;
 
 const LayoutWrapper = ({ children, currentPageName }) =>
   Layout ? <Layout currentPageName={currentPageName}>{children}</Layout> : <>{children}</>;
-
-function LoginPlaceholder() {
-  return (
-    <div className="min-h-screen flex items-center justify-center p-6 bg-slate-50">
-      <div className="max-w-md w-full bg-white border rounded-xl p-6">
-        <h1 className="text-xl font-semibold text-slate-900">Not signed in</h1>
-        <p className="text-sm text-slate-600 mt-2">
-          Supabase session is missing. Next step is to add a real login screen (magic link or password)
-          and an auth callback route so the session is saved.
-        </p>
-      </div>
-    </div>
-  );
-}
 
 function AuthedRoutes() {
   const { user, loading } = useAuth();
@@ -46,9 +36,23 @@ function AuthedRoutes() {
     );
   }
 
-  // If no user session, show placeholder for now
-  if (!user) return <LoginPlaceholder />;
+  /**
+   * ✅ If NOT signed in:
+   * - /login shows login form
+   * - /auth/callback finishes magic-link login + saves session
+   * - anything else routes to Login
+   */
+  if (!user) {
+    return (
+      <Routes>
+        <Route path="/login" element={<Login />} />
+        <Route path="/auth/callback" element={<AuthCallback />} />
+        <Route path="*" element={<Login />} />
+      </Routes>
+    );
+  }
 
+  // ✅ Signed in: show the real app routes
   return (
     <Routes>
       <Route
