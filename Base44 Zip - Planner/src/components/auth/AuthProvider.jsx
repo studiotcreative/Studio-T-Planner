@@ -21,11 +21,13 @@ export function AuthProvider({ children }) {
 
     setLoading(true);
     try {
-      // 1) Auth user (Supabase)
-      const { data: userRes, error: userErr } = await supabase.auth.getUser();
-      const authUser = userRes?.user ?? null;
+      // 1) Auth session (Supabase) — more reliable than getUser() when session restore is slow
+      const { data: sessionRes, error: sessionErr } = await supabase.auth.getSession();
+      const session = sessionRes?.session ?? null;
+      const authUser = session?.user ?? null;
 
-      if (userErr) console.error("[AUTH] getUser error:", userErr);
+      if (sessionErr) console.error("[AUTH] getSession error:", sessionErr);
+      console.log("[AUTH] session user:", authUser?.email ?? null);
 
       if (!authUser) {
         // Not logged in
@@ -41,14 +43,13 @@ export function AuthProvider({ children }) {
         .from("profiles")
         .select("id, full_name, role")
         .eq("id", authUser.id)
-        .single();
+        .maybeSingle();
 
       if (profileErr) console.error("[AUTH] profile error:", profileErr);
 
       const globalRole = profile?.role ?? "user";
 
-      // ✅ FIX #1: normalize user object so UI can safely use user.full_name
-      // Supabase auth user usually has name/full_name in user_metadata, not at top-level.
+      // Normalize user object so UI can safely use user.full_name
       const fullNameFromProfile = profile?.full_name ?? null;
       const fullNameFromAuth =
         authUser.user_metadata?.full_name ??
@@ -74,7 +75,6 @@ export function AuthProvider({ children }) {
       setWorkspaceMemberships(safeMemberships);
 
       // 4) Social accounts you can see (RLS-safe)
-      // ✅ FIX #2: avoid list-all for non-admins (often blocked by RLS)
       let safeAccounts = [];
 
       if (globalRole === "admin") {
@@ -141,7 +141,7 @@ export function AuthProvider({ children }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Role helpers (same API shape as your current file)
+  // Role helpers
   const isAdmin = () => userRole === "admin";
   const isAccountManager = () => userRole === "account_manager" || userRole === "admin";
   const isClient = () => userRole === "client_viewer" || userRole === "client_approver";
@@ -172,7 +172,7 @@ export function AuthProvider({ children }) {
     return assignedAccounts.some((a) => a.id === accountId);
   };
 
-  // ✅ FIX #3: reliable logout (reset local state immediately)
+  // Reliable logout (reset local state immediately)
   const signOut = async () => {
     const { error } = await supabase.auth.signOut();
     if (error) console.error("[AUTH] signOut error:", error);
