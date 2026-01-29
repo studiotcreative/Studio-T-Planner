@@ -1,5 +1,6 @@
-console.log("AUTH_PROVIDER_VERSION = 2026-01-29-1");
 // src/components/auth/AuthProvider.jsx
+console.log("AUTH_PROVIDER_VERSION = 2026-01-29-2");
+
 import React, { createContext, useContext, useEffect, useRef, useState } from "react";
 import { supabase } from "@/api/supabaseClient";
 
@@ -12,17 +13,16 @@ export function AuthProvider({ children }) {
   const [assignedAccounts, setAssignedAccounts] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // Prevent overlapping loads (auth events can fire multiple times quickly)
+  // Prevent overlapping loads
   const loadingRef = useRef(false);
 
   const loadUserData = async () => {
-    // Skip if a load is already running
     if (loadingRef.current) return;
     loadingRef.current = true;
 
     setLoading(true);
     try {
-      // 1) Auth session (Supabase) — more reliable than getUser() when session restore is slow
+      // 1) Auth session (more reliable than getUser for restore)
       const { data: sessionRes, error: sessionErr } = await supabase.auth.getSession();
       const session = sessionRes?.session ?? null;
       const authUser = session?.user ?? null;
@@ -31,7 +31,6 @@ export function AuthProvider({ children }) {
       console.log("[AUTH] session user:", authUser?.email ?? null);
 
       if (!authUser) {
-        // Not logged in
         setUser(null);
         setUserRole(null);
         setWorkspaceMemberships([]);
@@ -39,7 +38,7 @@ export function AuthProvider({ children }) {
         return;
       }
 
-      // 2) Global role + profile info from profiles (also contains full_name)
+      // 2) Profile role + name
       const { data: profile, error: profileErr } = await supabase
         .from("profiles")
         .select("id, full_name, role")
@@ -50,12 +49,9 @@ export function AuthProvider({ children }) {
 
       const globalRole = profile?.role ?? "user";
 
-      // Normalize user object so UI can safely use user.full_name
       const fullNameFromProfile = profile?.full_name ?? null;
       const fullNameFromAuth =
-        authUser.user_metadata?.full_name ??
-        authUser.user_metadata?.name ??
-        null;
+        authUser.user_metadata?.full_name ?? authUser.user_metadata?.name ?? null;
 
       const appUser = {
         ...authUser,
@@ -64,7 +60,7 @@ export function AuthProvider({ children }) {
 
       setUser(appUser);
 
-      // 3) Workspace memberships (workspace-level roles)
+      // 3) Workspace memberships
       const { data: memberships, error: memErr } = await supabase
         .from("workspace_members")
         .select("workspace_id, role")
@@ -75,7 +71,7 @@ export function AuthProvider({ children }) {
       const safeMemberships = memberships ?? [];
       setWorkspaceMemberships(safeMemberships);
 
-      // 4) Social accounts you can see (RLS-safe)
+      // 4) Social accounts
       let safeAccounts = [];
 
       if (globalRole === "admin") {
@@ -102,21 +98,14 @@ export function AuthProvider({ children }) {
 
       setAssignedAccounts(safeAccounts);
 
-      // 5) Effective app role (matches your app's expectations)
-      if (globalRole === "admin") {
-        setUserRole("admin");
-      } else if (safeMemberships.some((m) => m.role === "account_manager")) {
-        setUserRole("account_manager");
-      } else if (safeMemberships.some((m) => m.role === "client_approver")) {
-        setUserRole("client_approver");
-      } else if (safeMemberships.some((m) => m.role === "client_viewer")) {
-        setUserRole("client_viewer");
-      } else {
-        setUserRole("viewer");
-      }
+      // 5) Effective app role
+      if (globalRole === "admin") setUserRole("admin");
+      else if (safeMemberships.some((m) => m.role === "account_manager")) setUserRole("account_manager");
+      else if (safeMemberships.some((m) => m.role === "client_approver")) setUserRole("client_approver");
+      else if (safeMemberships.some((m) => m.role === "client_viewer")) setUserRole("client_viewer");
+      else setUserRole("viewer");
     } catch (e) {
       console.error("[AUTH] loadUserData unexpected error:", e);
-      // Fail safe: keep app usable
       setUser(null);
       setUserRole(null);
       setWorkspaceMemberships([]);
@@ -128,10 +117,8 @@ export function AuthProvider({ children }) {
   };
 
   useEffect(() => {
-    // Initial load
     loadUserData();
 
-    // Keep state in sync on login/logout/token refresh
     const { data: sub } = supabase.auth.onAuthStateChange(() => {
       loadUserData();
     });
@@ -142,7 +129,6 @@ export function AuthProvider({ children }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Role helpers
   const isAdmin = () => userRole === "admin";
   const isAccountManager = () => userRole === "account_manager" || userRole === "admin";
   const isClient = () => userRole === "client_viewer" || userRole === "client_approver";
@@ -163,26 +149,35 @@ export function AuthProvider({ children }) {
 
   const hasAccessToAccount = (accountId) => {
     if (isAdmin()) return true;
-
-    if (isClient()) {
-      // Clients are restricted by workspace in the UI + RLS server-side.
-      return true;
-    }
-
-    // assignedAccounts = readable accounts
+    if (isClient()) return true;
     return assignedAccounts.some((a) => a.id === accountId);
   };
 
-  // Reliable logout (reset local state immediately)
   const signOut = async () => {
     const { error } = await supabase.auth.signOut();
     if (error) console.error("[AUTH] signOut error:", error);
 
-    // Reset local state so UI updates even if navigation/caching is weird
     setUser(null);
     setUserRole(null);
     setWorkspaceMemberships([]);
     setAssignedAccounts([]);
+  };
+
+  // ✅ NEW: copy a clean access token (for Edge Function tests)
+  const copyAccessToken = async () => {
+    const { data, error } = await supabase.auth.getSession();
+    if (error) {
+      console.error("[AUTH] getSession error:", error);
+      alert("Could not read session");
+      return;
+    }
+    const token = data?.session?.access_token;
+    if (!token) {
+      alert("No access token found (not signed in?)");
+      return;
+    }
+    await navigator.clipboard.writeText(token);
+    alert("Access token copied ✅");
   };
 
   const value = {
@@ -200,6 +195,7 @@ export function AuthProvider({ children }) {
     hasAccessToAccount,
     refresh: loadUserData,
     signOut,
+    copyAccessToken, // ✅ expose helper
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
