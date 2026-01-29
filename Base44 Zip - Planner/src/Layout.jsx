@@ -1,9 +1,9 @@
 // src/Layout.jsx
-import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
-import { createPageUrl } from './utils';
-import { supabase } from '@/api/supabaseClient';
-import { useQuery } from '@tanstack/react-query';
+import React, { useState } from "react";
+import { Link } from "react-router-dom";
+import { createPageUrl } from "./utils";
+import { supabase } from "@/api/supabaseClient";
+import { useQuery } from "@tanstack/react-query";
 import {
   Calendar,
   LayoutGrid,
@@ -13,8 +13,8 @@ import {
   ChevronDown,
   Menu,
   LogOut,
-  Sparkles
-} from 'lucide-react';
+  Sparkles,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -25,25 +25,26 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
-import { AuthProvider, useAuth } from '@/components/auth/AuthProvider';
+import { AuthProvider, useAuth } from "@/components/auth/AuthProvider";
 import { Skeleton } from "@/components/ui/skeleton";
 
 function LayoutContent({ children, currentPageName }) {
   const { user, userRole, loading, isAdmin, isClient } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
 
+  // Admin-only workspaces fetch
   const { data: workspaces = [] } = useQuery({
-    queryKey: ['workspaces'],
+    queryKey: ["workspaces"],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from('workspaces')
-        .select('*')
-        .order('created_at', { ascending: false });
+        .from("workspaces")
+        .select("*")
+        .order("created_at", { ascending: false });
 
       if (error) throw error;
       return data ?? [];
     },
-    enabled: !loading && isAdmin()
+    enabled: !loading && Boolean(user) && isAdmin(),
   });
 
   const handleSignOut = async () => {
@@ -51,7 +52,7 @@ function LayoutContent({ children, currentPageName }) {
       await supabase.auth.signOut();
     } finally {
       // Hard redirect to fully reset any stuck auth state
-      window.location.href = '/';
+      window.location.href = "/";
     }
   };
 
@@ -73,22 +74,22 @@ function LayoutContent({ children, currentPageName }) {
 
     if (isAdmin()) {
       items.push(
-        { label: 'Dashboard', icon: LayoutGrid, href: createPageUrl('Dashboard') },
-        { label: 'Calendar', icon: Calendar, href: createPageUrl('Calendar') },
-        { label: 'Workspaces', icon: Building2, href: createPageUrl('Workspaces') },
-        { label: 'Team', icon: Users, href: createPageUrl('Team') },
-        { label: 'Settings', icon: Settings, href: createPageUrl('Settings') }
+        { label: "Dashboard", icon: LayoutGrid, href: createPageUrl("Dashboard") },
+        { label: "Calendar", icon: Calendar, href: createPageUrl("Calendar") },
+        { label: "Workspaces", icon: Building2, href: createPageUrl("Workspaces") },
+        { label: "Team", icon: Users, href: createPageUrl("Team") },
+        { label: "Settings", icon: Settings, href: createPageUrl("Settings") }
       );
     } else if (isClient()) {
       items.push(
-        { label: 'Calendar', icon: Calendar, href: createPageUrl('ClientCalendar') },
-        { label: 'Feed Preview', icon: LayoutGrid, href: createPageUrl('ClientFeed') }
+        { label: "Calendar", icon: Calendar, href: createPageUrl("ClientCalendar") },
+        { label: "Feed Preview", icon: LayoutGrid, href: createPageUrl("ClientFeed") }
       );
     } else {
-      // Account Manager
+      // Account Manager (non-admin internal user)
       items.push(
-        { label: 'Dashboard', icon: LayoutGrid, href: createPageUrl('Dashboard') },
-        { label: 'Calendar', icon: Calendar, href: createPageUrl('Calendar') }
+        { label: "Dashboard", icon: LayoutGrid, href: createPageUrl("Dashboard") },
+        { label: "Calendar", icon: Calendar, href: createPageUrl("Calendar") }
       );
     }
 
@@ -96,21 +97,26 @@ function LayoutContent({ children, currentPageName }) {
   };
 
   const navItems = getNavItems();
-  const initials = user?.full_name?.split(' ').map(n => n[0]).join('').toUpperCase() || 'U';
+
+  const initials =
+    user?.full_name?.split(" ").map((n) => n[0]).join("").toUpperCase() ||
+    user?.email?.[0]?.toUpperCase() ||
+    "U";
 
   const NavLinks = () => (
     <nav className="flex flex-col lg:flex-row gap-1 lg:gap-0.5">
       {navItems.map((item) => {
-        const isActive = currentPageName === item.label.replace(' ', '');
+        const isActive = currentPageName === item.label.replace(" ", "");
         return (
           <Link
             key={item.label}
             to={item.href}
             onClick={() => setMobileOpen(false)}
             className={`flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm font-medium transition-all
-              ${isActive
-                ? 'bg-slate-900 text-white'
-                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+              ${
+                isActive
+                  ? "bg-slate-900 text-white"
+                  : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
               }`}
           >
             <item.icon className="w-4 h-4" />
@@ -123,17 +129,39 @@ function LayoutContent({ children, currentPageName }) {
 
   return (
     <div className="min-h-screen bg-slate-50">
+      {/* DEBUG BOX (temporary) */}
+      <div
+        style={{
+          position: "fixed",
+          bottom: 10,
+          left: 10,
+          background: "white",
+          padding: 8,
+          border: "1px solid #ddd",
+          zIndex: 9999,
+          fontSize: 12,
+        }}
+      >
+        role: {String(userRole)} | isAdmin(): {String(isAdmin())} | email:{" "}
+        {String(user?.email)}
+      </div>
+
       {/* Header */}
       <header className="sticky top-0 z-50 bg-white/80 backdrop-blur-xl border-b border-slate-200/60">
         <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
             {/* Logo */}
             <div className="flex items-center gap-8">
-              <Link to={createPageUrl(isClient() ? 'ClientCalendar' : 'Dashboard')} className="flex items-center gap-2.5">
+              <Link
+                to={createPageUrl(isClient() ? "ClientCalendar" : "Dashboard")}
+                className="flex items-center gap-2.5"
+              >
                 <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-violet-600 to-indigo-600 flex items-center justify-center shadow-lg shadow-violet-500/20">
                   <Sparkles className="w-5 h-5 text-white" />
                 </div>
-                <span className="font-semibold text-lg text-slate-900 hidden sm:block">Studio T</span>
+                <span className="font-semibold text-lg text-slate-900 hidden sm:block">
+                  Studio T
+                </span>
               </Link>
 
               {/* Desktop Nav */}
@@ -147,7 +175,7 @@ function LayoutContent({ children, currentPageName }) {
               {/* Role Badge */}
               <div className="hidden md:flex items-center gap-2 px-3 py-1.5 bg-slate-100 rounded-full">
                 <span className="text-xs font-medium text-slate-600 capitalize">
-                  {userRole?.replace('_', ' ')}
+                  {String(userRole || "").replace("_", " ") || "unknown"}
                 </span>
               </div>
 
@@ -161,7 +189,7 @@ function LayoutContent({ children, currentPageName }) {
                       </AvatarFallback>
                     </Avatar>
                     <span className="hidden sm:block text-sm font-medium text-slate-700">
-                      {user?.full_name}
+                      {user?.full_name || user?.email || "User"}
                     </span>
                     <ChevronDown className="w-4 h-4 text-slate-400" />
                   </Button>
@@ -169,7 +197,9 @@ function LayoutContent({ children, currentPageName }) {
 
                 <DropdownMenuContent align="end" className="w-56">
                   <div className="px-3 py-2">
-                    <p className="text-sm font-medium text-slate-900">{user?.full_name}</p>
+                    <p className="text-sm font-medium text-slate-900">
+                      {user?.full_name || "User"}
+                    </p>
                     <p className="text-xs text-slate-500">{user?.email}</p>
                   </div>
                   <DropdownMenuSeparator />
@@ -200,9 +230,7 @@ function LayoutContent({ children, currentPageName }) {
       </header>
 
       {/* Main Content */}
-      <main>
-        {children}
-      </main>
+      <main>{children}</main>
     </div>
   );
 }
@@ -210,9 +238,7 @@ function LayoutContent({ children, currentPageName }) {
 export default function Layout({ children, currentPageName }) {
   return (
     <AuthProvider>
-      <LayoutContent currentPageName={currentPageName}>
-        {children}
-      </LayoutContent>
+      <LayoutContent currentPageName={currentPageName}>{children}</LayoutContent>
     </AuthProvider>
   );
 }
