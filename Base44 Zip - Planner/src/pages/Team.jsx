@@ -143,30 +143,37 @@ export default function Team() {
   };
 
   const inviteUser = async () => {
-    if (!inviteEmail) return;
+  if (!inviteEmail) return;
 
-    setSaving(true);
-    try {
-      // Call Edge Function (expects Authorization header automatically from supabase-js)
-      const { data, error } = await supabase.functions.invoke("invite-user", {
-        body: { email: inviteEmail, role: inviteGlobalRole },
-      });
-      if (error) throw error;
+  setSaving(true);
+  try {
+    // Call Edge Function to invite user + set global role
+    const { data, error } = await supabase.functions.invoke("invite-user", {
+      body: {
+        email: inviteEmail,
+        role: inviteGlobalRole, // "admin" | "user"
+      },
+    });
 
-      const invitedUserId = data?.user_id;
-      if (!invitedUserId) {
-        throw new Error("Invite succeeded but user_id was not returned. Update the Edge Function response.");
-      }
+    if (error) throw error;
 
-      // Optional: add them to a workspace immediately
-      if (inviteWorkspaceId) {
-        const { error: memErr } = await supabase.from("workspace_members").insert({
-          workspace_id: inviteWorkspaceId,
-          user_id: invitedUserId,
-          role: inviteWorkspaceRole,
-        });
-        if (memErr) throw memErr;
-      }
+    // ✅ At this stage we DO NOT expect a user_id back
+    // Supabase sends the invite email asynchronously
+    // The profile + role will be set when the user accepts
+
+    // Optional UX reset
+    setInviteEmail("");
+    // setInviteGlobalRole("user");
+    // setInviteWorkspaceId(null);
+
+    alert("Invite sent successfully. The user will appear after they accept the invite.");
+  } catch (err) {
+    console.error("Invite failed:", err);
+    alert(`Invite failed: ${err?.message || err}`);
+  } finally {
+    setSaving(false);
+  }
+};
 
       // Refresh list
       await qc.invalidateQueries({ queryKey: ["admin_users"] });
