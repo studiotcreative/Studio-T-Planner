@@ -26,6 +26,8 @@ export function AuthProvider({ children }) {
       const { data: sessionRes, error: sessionErr } = await supabase.auth.getSession();
       const session = sessionRes?.session ?? null;
       const authUser = session?.user ?? null;
+      
+      console.log("ACCESS_TOKEN:", session?.access_token);
 
       if (sessionErr) console.error("[AUTH] getSession error:", sessionErr);
       console.log("[AUTH] session user:", authUser?.email ?? null);
