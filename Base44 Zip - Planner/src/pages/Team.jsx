@@ -23,7 +23,7 @@ export default function Team() {
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteGlobalRole, setInviteGlobalRole] = useState("user"); // user|admin
   const [inviteWorkspaceId, setInviteWorkspaceId] = useState("");
-  const [inviteWorkspaceRole, setInviteWorkspaceRole] = useState("viewer"); // enum
+  const [inviteWorkspaceRole, setInviteWorkspaceRole] = useState("viewer"); // workspace_role enum
   const [saving, setSaving] = useState(false);
 
   // 1) Users (with email) via admin RPC
@@ -107,8 +107,13 @@ export default function Team() {
   const updateGlobalRole = async (userId, newRole) => {
     setSaving(true);
     try {
-      const { error } = await supabase.from("profiles").update({ role: newRole }).eq("id", userId);
+      const { error } = await supabase
+        .from("profiles")
+        .update({ role: newRole })
+        .eq("id", userId);
+
       if (error) throw error;
+
       await qc.invalidateQueries({ queryKey: ["admin_users"] });
     } catch (e) {
       console.error(e);
@@ -133,6 +138,7 @@ export default function Team() {
       );
 
       if (error) throw error;
+
       alert("Workspace role updated.");
     } catch (e) {
       console.error(e);
@@ -142,38 +148,37 @@ export default function Team() {
     }
   };
 
+  // ✅ FIXED: async function (so `await qc.invalidateQueries` is valid)
   const inviteUser = async () => {
-  if (!inviteEmail) return;
+    if (!inviteEmail) return;
 
-  setSaving(true);
-  try {
-    // Call Edge Function to invite user + set global role
-    const { data, error } = await supabase.functions.invoke("invite-user", {
-      body: {
-        email: inviteEmail,
-        role: inviteGlobalRole, // "admin" | "user"
-      },
-    });
+    setSaving(true);
+    try {
+      // Call Edge Function to invite user + set global role
+      const { data, error } = await supabase.functions.invoke("invite-user", {
+        body: {
+          email: inviteEmail,
+          role: inviteGlobalRole, // "admin" | "user"
+        },
+      });
 
-    if (error) throw error;
+      if (error) throw error;
 
-    // ✅ At this stage we DO NOT expect a user_id back
-    // Supabase sends the invite email asynchronously
-    // The profile + role will be set when the user accepts
+      // Optional: if your Edge Function returns `user_id`, we can immediately assign workspace role.
+      // If it does NOT return user_id, we skip this and the admin can assign after user accepts.
+      const invitedUserId = data?.user_id ?? null;
 
-    // Optional UX reset
-    setInviteEmail("");
-    // setInviteGlobalRole("user");
-    // setInviteWorkspaceId(null);
-
-    alert("Invite sent successfully. The user will appear after they accept the invite.");
-  } catch (err) {
-    console.error("Invite failed:", err);
-    alert(`Invite failed: ${err?.message || err}`);
-  } finally {
-    setSaving(false);
-  }
-};
+      if (inviteWorkspaceId && invitedUserId) {
+        const { error: memErr } = await supabase.from("workspace_members").upsert(
+          {
+            workspace_id: inviteWorkspaceId,
+            user_id: invitedUserId,
+            role: inviteWorkspaceRole,
+          },
+          { onConflict: "workspace_id,user_id" }
+        );
+        if (memErr) throw memErr;
+      }
 
       // Refresh list
       await qc.invalidateQueries({ queryKey: ["admin_users"] });
@@ -184,7 +189,11 @@ export default function Team() {
       setInviteWorkspaceId("");
       setInviteWorkspaceRole("viewer");
 
-      alert("Invite sent.");
+      alert(
+        invitedUserId
+          ? "Invite sent. User was also assigned to the workspace."
+          : "Invite sent. The user will appear after they accept the invite."
+      );
     } catch (e) {
       console.error(e);
       alert(e?.message ?? "Invite failed. Check console.");
@@ -225,7 +234,9 @@ export default function Team() {
             </div>
             <div>
               <p className="font-semibold text-slate-900">Invite a new member</p>
-              <p className="text-sm text-slate-500">Creates the user and optionally assigns a workspace role</p>
+              <p className="text-sm text-slate-500">
+                Invites the user and sets global role. Workspace assignment happens immediately only if the Edge Function returns user_id.
+              </p>
             </div>
           </div>
 
@@ -420,7 +431,6 @@ export default function Team() {
                         onChange={(e) => {
                           const wsId = e.target.value;
                           if (!wsId) return;
-                          // When you pick a workspace, we assign viewer by default
                           assignToWorkspace(user.id, wsId, "viewer");
                           e.target.value = "";
                         }}
@@ -468,3 +478,4 @@ export default function Team() {
     </div>
   );
 }
+
