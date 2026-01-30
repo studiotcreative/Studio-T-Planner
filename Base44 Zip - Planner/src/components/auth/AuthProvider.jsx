@@ -22,23 +22,35 @@ export function AuthProvider({ children }) {
 
     setLoading(true);
     try {
-      // 1) Auth session (more reliable than getUser for restore)
-      const { data: sessionRes, error: sessionErr } = await supabase.auth.getSession();
-      const session = sessionRes?.session ?? null;
-      const authUser = session?.user ?? null;
-      
-      console.log("ACCESS_TOKEN:", session?.access_token);
+     // 1) Auth session (most reliable source of access token)
+const { data: sessionRes, error: sessionErr } = await supabase.auth.getSession();
 
-      if (sessionErr) console.error("[AUTH] getSession error:", sessionErr);
-      console.log("[AUTH] session user:", authUser?.email ?? null);
+if (sessionErr) {
+  console.error("[AUTH] getSession error:", sessionErr);
+}
 
-      if (!authUser) {
-        setUser(null);
-        setUserRole(null);
-        setWorkspaceMemberships([]);
-        setAssignedAccounts([]);
-        return;
-      }
+const session = sessionRes?.session ?? null;
+const authUser = session?.user ?? null;
+
+// ✅ DEBUG (safe): log token shape, not full value
+if (session?.access_token) {
+  const token = session.access_token;
+  console.log("TOKEN_LEN:", token.length);
+  console.log("TOKEN_HEAD:", token.slice(0, 25));
+  console.log("TOKEN_TAIL:", token.slice(-25));
+} else {
+  console.log("NO ACCESS TOKEN");
+}
+
+console.log("[AUTH] session user:", authUser?.email ?? null);
+
+if (!authUser) {
+  setUser(null);
+  setUserRole(null);
+  setWorkspaceMemberships([]);
+  setAssignedAccounts([]);
+  return;
+}
 
       // 2) Profile role + name
       const { data: profile, error: profileErr } = await supabase
