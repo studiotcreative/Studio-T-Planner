@@ -48,7 +48,7 @@ export default function Team() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("social_accounts")
-        .select("id, platform, handle, assigned_manager_email, created_at")
+        .select("id, platform, handle, created_at")
         .order("created_at", { ascending: true });
 
       if (error) throw error;
