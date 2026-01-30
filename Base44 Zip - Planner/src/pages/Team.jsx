@@ -148,42 +148,47 @@ export default function Team() {
     }
   };
 
-  // ✅ FIXED: async function (so `await qc.invalidateQueries` is valid)
+  /**
+   * ✅ FIXED INVITE FLOW:
+   * - Calls Edge Function: invite-user
+   * - Sends: email, global role, workspace_id, workspace_role
+   * - Edge Function should:
+   *   1) verify caller is admin
+   *   2) invite user
+   *   3) upsert profiles.role
+   *   4) upsert workspace_members (if workspace_id + workspace_role provided)
+   *   5) return { success: true, user_id }
+   */
   const inviteUser = async () => {
-    if (!inviteEmail) return;
+    const email = inviteEmail.trim();
+    if (!email) return;
 
     setSaving(true);
     try {
-      // Call Edge Function to invite user + set global role
+      const payload = {
+        email,
+        role: inviteGlobalRole, // "admin" | "user"
+        workspace_id: inviteWorkspaceId || null,
+        workspace_role: inviteWorkspaceId ? inviteWorkspaceRole : null,
+      };
+
       const { data, error } = await supabase.functions.invoke("invite-user", {
-        body: {
-          email: inviteEmail,
-          role: inviteGlobalRole, // "admin" | "user"
-        },
+        body: payload,
       });
 
-      if (error) throw error;
-
-      // Optional: if your Edge Function returns `user_id`, we can immediately assign workspace role.
-      // If it does NOT return user_id, we skip this and the admin can assign after user accepts.
-      const invitedUserId = data?.user_id ?? null;
-
-      if (inviteWorkspaceId && invitedUserId) {
-        const { error: memErr } = await supabase.from("workspace_members").upsert(
-          {
-            workspace_id: inviteWorkspaceId,
-            user_id: invitedUserId,
-            role: inviteWorkspaceRole,
-          },
-          { onConflict: "workspace_id,user_id" }
-        );
-        if (memErr) throw memErr;
+      if (error) {
+        // Supabase function invoke errors often include a generic message.
+        // This logs the full object for debugging.
+        console.error("Edge Function error:", error);
+        throw error;
       }
 
-      // Refresh list
+      const invitedUserId = data?.user_id ?? null;
+
+      // Refresh admin list
       await qc.invalidateQueries({ queryKey: ["admin_users"] });
 
-      // Reset
+      // Reset form
       setInviteEmail("");
       setInviteGlobalRole("user");
       setInviteWorkspaceId("");
@@ -191,8 +196,8 @@ export default function Team() {
 
       alert(
         invitedUserId
-          ? "Invite sent. User was also assigned to the workspace."
-          : "Invite sent. The user will appear after they accept the invite."
+          ? "Invite sent. User was assigned (if workspace selected)."
+          : "Invite sent."
       );
     } catch (e) {
       console.error(e);
@@ -205,7 +210,9 @@ export default function Team() {
   if (!isAdmin()) {
     return (
       <div className="max-w-[1200px] mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <p className="text-center text-slate-500">You don't have access to this page.</p>
+        <p className="text-center text-slate-500">
+          You don't have access to this page.
+        </p>
       </div>
     );
   }
@@ -235,7 +242,7 @@ export default function Team() {
             <div>
               <p className="font-semibold text-slate-900">Invite a new member</p>
               <p className="text-sm text-slate-500">
-                Invites the user and sets global role. Workspace assignment happens immediately only if the Edge Function returns user_id.
+                Invites the user, sets global role, and assigns them to a workspace (optional).
               </p>
             </div>
           </div>
@@ -247,6 +254,7 @@ export default function Team() {
                 value={inviteEmail}
                 onChange={(e) => setInviteEmail(e.target.value)}
                 placeholder="name@company.com"
+                autoComplete="email"
               />
             </div>
 
@@ -284,6 +292,8 @@ export default function Team() {
                 className="w-full h-10 border rounded-md px-3"
                 value={inviteWorkspaceRole}
                 onChange={(e) => setInviteWorkspaceRole(e.target.value)}
+                disabled={!inviteWorkspaceId}
+                title={!inviteWorkspaceId ? "Select a workspace first" : "Workspace role"}
               >
                 <option value="viewer">viewer</option>
                 <option value="client_viewer">client_viewer</option>
@@ -295,7 +305,11 @@ export default function Team() {
             <div className="md:col-span-3" />
 
             <div className="flex items-end">
-              <Button disabled={saving || !inviteEmail} onClick={inviteUser} className="w-full">
+              <Button
+                disabled={saving || !inviteEmail.trim()}
+                onClick={inviteUser}
+                className="w-full"
+              >
                 {saving ? "Working..." : "Invite"}
               </Button>
             </div>
@@ -383,7 +397,9 @@ export default function Team() {
       ) : usersErr ? (
         <div className="text-red-600 text-sm bg-white border rounded-xl p-4">
           Failed to load users. This is usually missing the Admin RPC or policies.
-          <div className="mt-2 text-slate-700">Error: {String(usersErr?.message ?? usersErr)}</div>
+          <div className="mt-2 text-slate-700">
+            Error: {String(usersErr?.message ?? usersErr)}
+          </div>
         </div>
       ) : (
         <div className="bg-white rounded-xl border border-slate-200/60 overflow-hidden">
@@ -478,4 +494,5 @@ export default function Team() {
     </div>
   );
 }
+
 
