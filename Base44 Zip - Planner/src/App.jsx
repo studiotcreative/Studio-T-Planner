@@ -13,12 +13,7 @@ import { AuthProvider, useAuth } from "@/components/auth/AuthProvider";
 // ✅ Auth pages
 import Login from "@/pages/Login";
 import AuthCallback from "@/pages/AuthCallback";
-
-// ✅ NEW: Set Password page (you will create this file)
 import SetPassword from "@/pages/SetPassword";
-
-// (Optional) Keep disabled if you’re still migrating it
-// import NavigationTracker from "@/lib/NavigationTracker";
 
 const { Pages, Layout, mainPage } = pagesConfig;
 const mainPageKey = mainPage ?? Object.keys(Pages)[0];
@@ -30,7 +25,6 @@ const LayoutWrapper = ({ children, currentPageName }) =>
 function AuthedRoutes() {
   const { user, loading } = useAuth();
 
-  // Loading while Supabase session is being checked
   if (loading) {
     return (
       <div className="fixed inset-0 flex items-center justify-center">
@@ -39,34 +33,24 @@ function AuthedRoutes() {
     );
   }
 
-  /**
-   * ✅ If NOT signed in:
-   * - /login shows login form
-   * - /auth/callback finishes magic-link login + saves session
-   * - anything else routes to Login
-   */
+  // ✅ Not signed in: allow callback + set-password routes to load
   if (!user) {
-  return (
-    <Routes>
-      <Route path="/auth/callback" element={<AuthCallback />} />
-      <Route path="/login" element={<Login />} />
-      <Route path="*" element={<Login />} />
-    </Routes>
-  );
-}
+    return (
+      <Routes>
+        <Route path="/auth/callback" element={<AuthCallback />} />
+        <Route path="/set-password" element={<SetPassword />} />
+        <Route path="/login" element={<Login />} />
+        <Route path="*" element={<Login />} />
+      </Routes>
+    );
+  }
 
-  /**
-   * ✅ Signed in:
-   * - /set-password is available (for invite/recovery flows)
-   * - normal app routes load
-   */
+  // ✅ Signed in: full app routes
   return (
     <Routes>
-      {/* Auth routes (safe to keep even when signed in) */}
       <Route path="/auth/callback" element={<AuthCallback />} />
       <Route path="/set-password" element={<SetPassword />} />
 
-      {/* Main page */}
       <Route
         path="/"
         element={
@@ -76,7 +60,6 @@ function AuthedRoutes() {
         }
       />
 
-      {/* Dynamic pages from config */}
       {Object.entries(Pages).map(([path, Page]) => (
         <Route
           key={path}
@@ -99,13 +82,12 @@ export default function App() {
     <AuthProvider>
       <QueryClientProvider client={queryClientInstance}>
         <Router>
-          {/* <NavigationTracker /> */}
           <AuthedRoutes />
         </Router>
-
         <Toaster />
       </QueryClientProvider>
     </AuthProvider>
   );
 }
+
 
