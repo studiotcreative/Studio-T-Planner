@@ -1,5 +1,5 @@
 // src/App.jsx
-import { BrowserRouter as Router, Route, Routes } from "react-router-dom";
+import { BrowserRouter as Router, Route, Routes, Navigate } from "react-router-dom";
 import { QueryClientProvider } from "@tanstack/react-query";
 
 import { Toaster } from "@/components/ui/toaster";
@@ -23,7 +23,7 @@ const LayoutWrapper = ({ children, currentPageName }) =>
   Layout ? <Layout currentPageName={currentPageName}>{children}</Layout> : <>{children}</>;
 
 function AuthedRoutes() {
-  const { user, loading } = useAuth();
+  const { user, loading, mustSetPassword } = useAuth();
 
   if (loading) {
     return (
@@ -41,6 +41,17 @@ function AuthedRoutes() {
         <Route path="/set-password" element={<SetPassword />} />
         <Route path="/login" element={<Login />} />
         <Route path="*" element={<Login />} />
+      </Routes>
+    );
+  }
+
+  // ✅ Signed in BUT must set password: force them to /set-password (no bypass)
+  if (mustSetPassword) {
+    return (
+      <Routes>
+        <Route path="/auth/callback" element={<AuthCallback />} />
+        <Route path="/set-password" element={<SetPassword />} />
+        <Route path="*" element={<Navigate to="/set-password" replace />} />
       </Routes>
     );
   }
@@ -89,5 +100,4 @@ export default function App() {
     </AuthProvider>
   );
 }
-
 
