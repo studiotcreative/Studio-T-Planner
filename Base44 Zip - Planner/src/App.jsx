@@ -10,9 +10,12 @@ import PageNotFound from "./lib/PageNotFound";
 // ✅ Supabase auth
 import { AuthProvider, useAuth } from "@/components/auth/AuthProvider";
 
-// ✅ NEW: login + callback pages (you will create these files)
+// ✅ Auth pages
 import Login from "@/pages/Login";
 import AuthCallback from "@/pages/AuthCallback";
+
+// ✅ NEW: Set Password page (you will create this file)
+import SetPassword from "@/pages/SetPassword";
 
 // (Optional) Keep disabled if you’re still migrating it
 // import NavigationTracker from "@/lib/NavigationTracker";
@@ -52,9 +55,18 @@ function AuthedRoutes() {
     );
   }
 
-  // ✅ Signed in: show the real app routes
+  /**
+   * ✅ Signed in:
+   * - /set-password is available (for invite/recovery flows)
+   * - normal app routes load
+   */
   return (
     <Routes>
+      {/* Auth routes (safe to keep even when signed in) */}
+      <Route path="/auth/callback" element={<AuthCallback />} />
+      <Route path="/set-password" element={<SetPassword />} />
+
+      {/* Main page */}
       <Route
         path="/"
         element={
@@ -64,6 +76,7 @@ function AuthedRoutes() {
         }
       />
 
+      {/* Dynamic pages from config */}
       {Object.entries(Pages).map(([path, Page]) => (
         <Route
           key={path}
