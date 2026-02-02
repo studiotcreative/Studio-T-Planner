@@ -1,14 +1,21 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { supabase } from "@/api/supabaseClient";
 import { useAuth } from "@/components/auth/AuthProvider";
 
 export default function SetPassword() {
-  const { user, profile } = useAuth();
+  const { user, profile, loading, mustSetPassword } = useAuth();
 
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  // If user is logged in and doesn't need password setup, don't allow this page
+  useEffect(() => {
+    if (!loading && user && !mustSetPassword) {
+      window.location.replace("/");
+    }
+  }, [loading, user, mustSetPassword]);
 
   const submit = async (e) => {
     e.preventDefault();
@@ -29,17 +36,17 @@ export default function SetPassword() {
       return;
     }
 
-    setLoading(true);
+    setSaving(true);
 
     // 1) Set password
     const { error: passErr } = await supabase.auth.updateUser({ password });
     if (passErr) {
       setError(passErr.message);
-      setLoading(false);
+      setSaving(false);
       return;
     }
 
-    // 2) Clear flag
+    // 2) Clear must_set_password
     const { error: flagErr } = await supabase
       .from("profiles")
       .update({ must_set_password: false })
@@ -47,21 +54,30 @@ export default function SetPassword() {
 
     if (flagErr) {
       setError(flagErr.message);
-      setLoading(false);
+      setSaving(false);
       return;
     }
 
-    // 3) Sign out → force normal login
+    // 3) Force normal login
     await supabase.auth.signOut();
     window.location.replace("/login");
   };
+
+  // Loading / no user UI
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 p-6">
+        <div className="bg-white border rounded-xl p-6 text-sm text-slate-700">Loading…</div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-50 p-6">
       <div className="w-full max-w-md bg-white border rounded-xl p-6">
         <h1 className="text-xl font-semibold">Create your password</h1>
         <p className="text-sm text-slate-600 mt-1">
-          Set a password to finish activating your account.
+          {profile?.email ? `Account: ${profile.email}` : "Set a password to finish activating your account."}
         </p>
 
         <form onSubmit={submit} className="mt-4 space-y-3">
@@ -84,10 +100,10 @@ export default function SetPassword() {
           />
 
           <button
-            disabled={loading}
+            disabled={saving}
             className="w-full bg-slate-900 text-white rounded-lg px-3 py-2 text-sm font-medium disabled:opacity-60"
           >
-            {loading ? "Saving…" : "Save password"}
+            {saving ? "Saving…" : "Save password"}
           </button>
 
           {error && <p className="text-sm text-red-600">{error}</p>}
@@ -96,3 +112,4 @@ export default function SetPassword() {
     </div>
   );
 }
+
