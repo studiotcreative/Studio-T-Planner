@@ -6,30 +6,38 @@ export default function AuthCallback() {
     const run = async () => {
       const url = new URL(window.location.href);
 
-      // 1) If PKCE code is present, exchange it for a session
+      // Handle PKCE code exchange if present
       const code = url.searchParams.get("code");
       if (code) {
         const { error } = await supabase.auth.exchangeCodeForSession(code);
         if (error) {
-          // If this fails, send to login (or show error UI)
-          window.location.replace(`/login`);
+          console.error("exchangeCodeForSession error:", error);
+          window.location.replace("/login");
           return;
         }
-      } else {
-        // 2) Otherwise rely on implicit hash/session parsing
-        await supabase.auth.getSession();
       }
 
-      // read invite/recovery type from query or hash
+      // Ensure we have a session after callback
+      const { data } = await supabase.auth.getSession();
+      const session = data?.session ?? null;
+
+      if (!session?.user) {
+        window.location.replace("/login");
+        return;
+      }
+
+      // Identify invite/recovery type
       const typeFromQuery = url.searchParams.get("type");
       const typeFromHash = new URLSearchParams(url.hash.replace("#", "")).get("type");
       const type = typeFromQuery || typeFromHash;
 
+      // Invite / recovery always go to Set Password
       if (type === "invite" || type === "recovery") {
         window.location.replace("/set-password");
         return;
       }
 
+      // Default landing
       window.location.replace("/");
     };
 
