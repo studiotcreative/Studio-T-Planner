@@ -12,10 +12,32 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 
+function safeMessage(err) {
+  if (!err) return "Unknown error";
+  if (typeof err === "string") return err;
+  return err?.message || err?.error?.message || JSON.stringify(err);
+}
+
+function getInitials(nameOrEmail) {
+  const s = (nameOrEmail ?? "").trim();
+  if (!s) return "?";
+  const parts = s.split(/\s+/).filter(Boolean);
+  if (parts.length === 1) return (parts[0][0] ?? "?").toUpperCase();
+  return ((parts[0][0] ?? "") + (parts[parts.length - 1][0] ?? "")).toUpperCase() || "?";
+}
+
+function RoleBadge({ role }) {
+  if (role === "admin") {
+    return <Badge className="bg-violet-100 text-violet-700">Admin</Badge>;
+  }
+  return <Badge className="bg-slate-100 text-slate-700">User</Badge>;
+}
+
 export default function Team() {
-  const { isAdmin, user } = useAuth(); // assumes AuthProvider exposes `user`
+  const { isAdmin, user } = useAuth(); // assumes isAdmin() exists + user
   const qc = useQueryClient();
 
+  // UI state
   const [search, setSearch] = useState("");
 
   // Invite form
@@ -23,26 +45,40 @@ export default function Team() {
   const [inviteGlobalRole, setInviteGlobalRole] = useState("user"); // user|admin
   const [inviteWorkspaceId, setInviteWorkspaceId] = useState("");
   const [inviteWorkspaceRole, setInviteWorkspaceRole] = useState("viewer"); // workspace_role enum
-  const [saving, setSaving] = useState(false);
 
-  // 1) Users (with email) via admin RPC
+  // Action state
+  const [busyKey, setBusyKey] = useState(""); // e.g. "invite" | "role:<id>" | "delete:<id>"...
+  const busy = (key) => busyKey === key;
+  const anyBusy = Boolean(busyKey);
+
+  // --- Queries ---
+
+  // Admin users list (RPC)
   const {
     data: users = [],
     isLoading: loadingUsers,
     error: usersErr,
   } = useQuery({
     queryKey: ["admin_users"],
+    enabled: typeof isAdmin === "function" ? isAdmin() : Boolean(isAdmin),
     queryFn: async () => {
       const { data, error } = await supabase.rpc("admin_list_users");
       if (error) throw error;
       return data ?? [];
     },
-    enabled: isAdmin(),
   });
 
-  // 2) Workspaces (for assignment dropdown)
-  const { data: workspaces = [] } = useQuery({
+  // Workspaces (optional dropdown). If this errors (you currently have 500s),
+  // we keep the page working and show a small warning.
+  const {
+    data: workspaces = [],
+    isLoading: loadingWorkspaces,
+    error: workspacesErr,
+    refetch: refetchWorkspaces,
+  } = useQuery({
     queryKey: ["workspaces"],
+    enabled: typeof isAdmin === "function" ? isAdmin() : Boolean(isAdmin),
+    retry: false,
     queryFn: async () => {
       const { data, error } = await supabase
         .from("workspaces")
@@ -52,7 +88,6 @@ export default function Team() {
       if (error) throw error;
       return data ?? [];
     },
-    enabled: isAdmin(),
   });
 
   const filteredUsers = useMemo(() => {
@@ -67,73 +102,28 @@ export default function Team() {
     });
   }, [users, search]);
 
-  const getInitials = (nameOrEmail) => {
-    const s = (nameOrEmail ?? "").trim();
-    if (!s) return "?";
-    const parts = s.split(" ");
-    if (parts.length === 1) return parts[0][0]?.toUpperCase() ?? "?";
-    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-  };
+  const adminCount = useMemo(() => users.filter((u) => u.role === "admin").length, [users]);
 
-  const getRoleBadge = (role) => {
-    if (role === "admin") {
-      return <Badge className="bg-violet-100 text-violet-700">Admin</Badge>;
-    }
-    return <Badge className="bg-slate-100 text-slate-700">User</Badge>;
-  };
+  // --- Helpers ---
 
-  const updateGlobalRole = async (userId, newRole) => {
-    setSaving(true);
-    try {
-      const { error } = await supabase
-        .from("profiles")
-        .update({ role: newRole })
-        .eq("id", userId);
+  async function getAccessTokenOrThrow() {
+    const { data, error } = await supabase.auth.getSession();
+    if (error) throw error;
+    const token = data?.session?.access_token;
+    if (!token) throw new Error("No access token. Please log in again.");
+    return token;
+  }
 
-      if (error) throw error;
-      await qc.invalidateQueries({ queryKey: ["admin_users"] });
-    } catch (e) {
-      console.error(e);
-      alert(e?.message ?? "Failed to update role.");
-    } finally {
-      setSaving(false);
-    }
-  };
+  // --- Actions ---
 
-  const assignToWorkspace = async (userId, workspaceId, role) => {
-    if (!workspaceId) return;
-
-    setSaving(true);
-    try {
-      const { error } = await supabase.from("workspace_members").upsert(
-        {
-          workspace_id: workspaceId,
-          user_id: userId,
-          role,
-        },
-        { onConflict: "workspace_id,user_id" }
-      );
-
-      if (error) throw error;
-      alert("Workspace membership updated.");
-    } catch (e) {
-      console.error(e);
-      alert(e?.message ?? "Failed to assign workspace role.");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  /**
-   * INVITE FLOW (Edge Function: invite-user)
-   * Sends: email, role, workspace_id, workspace_role
-   */
-  const inviteUser = async () => {
-    const email = inviteEmail.trim();
+  async function inviteUser() {
+    const email = inviteEmail.trim().toLowerCase();
     if (!email) return;
 
-    setSaving(true);
+    setBusyKey("invite");
     try {
+      const token = await getAccessTokenOrThrow();
+
       const payload = {
         email,
         role: inviteGlobalRole, // "admin" | "user"
@@ -141,8 +131,29 @@ export default function Team() {
         workspace_role: inviteWorkspaceId ? inviteWorkspaceRole : null,
       };
 
-      const { data, error } = await supabase.functions.invoke("invite-user", { body: payload });
-      if (error) throw error;
+      // IMPORTANT: attach Authorization header explicitly
+      const { data, error } = await supabase.functions.invoke("invite-user", {
+        body: payload,
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (error) {
+        // This often contains a generic message; try to surface details:
+        const msg = error?.context?.response
+          ? await error.context.response.text().catch(() => null)
+          : null;
+
+        if (msg) {
+          try {
+            const parsed = JSON.parse(msg);
+            throw new Error(parsed?.error || parsed?.message || msg);
+          } catch {
+            throw new Error(msg);
+          }
+        }
+
+        throw new Error(error.message || "Invite failed");
+      }
 
       await qc.invalidateQueries({ queryKey: ["admin_users"] });
 
@@ -152,23 +163,62 @@ export default function Team() {
       setInviteWorkspaceId("");
       setInviteWorkspaceRole("viewer");
 
-      alert(data?.user_id ? "Invite sent ✅" : "Invite sent ✅");
+      alert(data?.mode === "existing" ? "User updated ✅" : "Invite sent ✅");
     } catch (e) {
-      console.error(e);
-      alert(e?.message ?? "Invite failed. Check console.");
+      console.error("inviteUser error:", e);
+      alert(safeMessage(e));
     } finally {
-      setSaving(false);
+      setBusyKey("");
     }
-  };
+  }
 
-  /**
-   * REMOVE USER ACCESS (SOFT) / DELETE USER (HARD)
-   * Edge Function: delete-user
-   * body: { user_id, mode: "soft" | "hard" }
-   *
-   * ✅ FIX: explicitly attach Authorization header (prevents 401)
-   */
-  const removeUser = async (targetUserId, mode) => {
+  async function updateGlobalRole(targetUserId, newRole) {
+    if (!targetUserId) return;
+    const key = `role:${targetUserId}`;
+
+    // prevent self-role change here (optional safety)
+    if (user?.id && targetUserId === user.id) {
+      alert("You cannot change your own role here.");
+      return;
+    }
+
+    setBusyKey(key);
+    try {
+      const { error } = await supabase.from("profiles").update({ role: newRole }).eq("id", targetUserId);
+      if (error) throw error;
+
+      await qc.invalidateQueries({ queryKey: ["admin_users"] });
+      alert("Role updated ✅");
+    } catch (e) {
+      console.error("updateGlobalRole error:", e);
+      alert(safeMessage(e));
+    } finally {
+      setBusyKey("");
+    }
+  }
+
+  async function assignToWorkspace(targetUserId, workspaceId, role) {
+    if (!targetUserId || !workspaceId) return;
+    const key = `ws:${targetUserId}:${workspaceId}`;
+
+    setBusyKey(key);
+    try {
+      const { error } = await supabase.from("workspace_members").upsert(
+        { workspace_id: workspaceId, user_id: targetUserId, role },
+        { onConflict: "workspace_id,user_id" }
+      );
+
+      if (error) throw error;
+      alert("Workspace membership updated ✅");
+    } catch (e) {
+      console.error("assignToWorkspace error:", e);
+      alert(safeMessage(e));
+    } finally {
+      setBusyKey("");
+    }
+  }
+
+  async function removeUser(targetUserId, mode) {
     if (!targetUserId) return;
 
     // prevent self-remove
@@ -186,42 +236,55 @@ export default function Team() {
     const typed = window.prompt(confirmText);
     if (typed !== required) return;
 
-    setSaving(true);
-    try {
-      // ✅ Get session token explicitly
-      const { data: sessionRes, error: sessionErr } = await supabase.auth.getSession();
-      if (sessionErr) throw sessionErr;
+    const key = `delete:${targetUserId}:${mode}`;
+    setBusyKey(key);
 
-      const token = sessionRes?.session?.access_token;
-      if (!token) throw new Error("No access token found. Please log in again.");
+    try {
+      const token = await getAccessTokenOrThrow();
 
       const { data, error } = await supabase.functions.invoke("delete-user", {
         body: { user_id: targetUserId, mode },
         headers: { Authorization: `Bearer ${token}` },
       });
 
-      if (error) throw error;
+      if (error) {
+        const msg = error?.context?.response
+          ? await error.context.response.text().catch(() => null)
+          : null;
 
-      await qc.invalidateQueries({ queryKey: ["admin_users"] });
-      alert(mode === "hard" ? "User deleted ✅" : "User access removed ✅");
+        if (msg) {
+          try {
+            const parsed = JSON.parse(msg);
+            throw new Error(parsed?.error || parsed?.message || msg);
+          } catch {
+            throw new Error(msg);
+          }
+        }
+
+        throw new Error(error.message || "Delete failed");
+      }
+
       console.log("delete-user result:", data);
-    } catch (e) {
-      console.error(e);
-      alert(e?.message ?? "Failed to remove user.");
-    } finally {
-      setSaving(false);
-    }
-  };
+      await qc.invalidateQueries({ queryKey: ["admin_users"] });
 
-  if (!isAdmin()) {
+      alert(mode === "hard" ? "User deleted ✅" : "User access removed ✅");
+    } catch (e) {
+      console.error("removeUser error:", e);
+      alert(safeMessage(e));
+    } finally {
+      setBusyKey("");
+    }
+  }
+
+  // --- Access guard ---
+  const adminOk = typeof isAdmin === "function" ? isAdmin() : Boolean(isAdmin);
+  if (!adminOk) {
     return (
       <div className="max-w-[1200px] mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <p className="text-center text-slate-500">You don't have access to this page.</p>
       </div>
     );
   }
-
-  const adminCount = users.filter((u) => u.role === "admin").length;
 
   return (
     <div className="max-w-[1200px] mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -232,6 +295,19 @@ export default function Team() {
           <p className="text-slate-500 mt-1">{users.length} team members</p>
         </div>
       </div>
+
+      {/* Workspaces warning (you currently have 500s) */}
+      {workspacesErr && (
+        <div className="mb-6 text-sm bg-amber-50 border border-amber-200 text-amber-900 rounded-xl p-4">
+          <div className="font-medium">Workspaces failed to load.</div>
+          <div className="mt-1 opacity-90">{safeMessage(workspacesErr)}</div>
+          <div className="mt-3">
+            <Button variant="outline" onClick={() => refetchWorkspaces()} disabled={loadingWorkspaces || anyBusy}>
+              Retry loading workspaces
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* Invite */}
       <Card className="bg-white border-slate-200/60 mb-6">
@@ -256,6 +332,7 @@ export default function Team() {
                 onChange={(e) => setInviteEmail(e.target.value)}
                 placeholder="name@company.com"
                 autoComplete="email"
+                disabled={busy("invite")}
               />
             </div>
 
@@ -265,6 +342,7 @@ export default function Team() {
                 className="w-full h-10 border rounded-md px-3"
                 value={inviteGlobalRole}
                 onChange={(e) => setInviteGlobalRole(e.target.value)}
+                disabled={busy("invite")}
               >
                 <option value="user">user</option>
                 <option value="admin">admin</option>
@@ -277,6 +355,8 @@ export default function Team() {
                 className="w-full h-10 border rounded-md px-3"
                 value={inviteWorkspaceId}
                 onChange={(e) => setInviteWorkspaceId(e.target.value)}
+                disabled={busy("invite") || Boolean(workspacesErr) || loadingWorkspaces}
+                title={workspacesErr ? "Workspaces failed to load" : "Workspace (optional)"}
               >
                 <option value="">(none)</option>
                 {workspaces.map((w) => (
@@ -293,7 +373,7 @@ export default function Team() {
                 className="w-full h-10 border rounded-md px-3"
                 value={inviteWorkspaceRole}
                 onChange={(e) => setInviteWorkspaceRole(e.target.value)}
-                disabled={!inviteWorkspaceId}
+                disabled={busy("invite") || !inviteWorkspaceId}
                 title={!inviteWorkspaceId ? "Select a workspace first" : "Workspace role"}
               >
                 <option value="viewer">viewer</option>
@@ -306,8 +386,12 @@ export default function Team() {
             <div className="md:col-span-3" />
 
             <div className="flex items-end">
-              <Button disabled={saving || !inviteEmail.trim()} onClick={inviteUser} className="w-full">
-                {saving ? "Working..." : "Invite"}
+              <Button
+                disabled={busy("invite") || !inviteEmail.trim()}
+                onClick={inviteUser}
+                className="w-full"
+              >
+                {busy("invite") ? "Working..." : "Invite"}
               </Button>
             </div>
           </div>
@@ -366,7 +450,7 @@ export default function Team() {
       ) : usersErr ? (
         <div className="text-red-600 text-sm bg-white border rounded-xl p-4">
           Failed to load users.
-          <div className="mt-2 text-slate-700">Error: {String(usersErr?.message ?? usersErr)}</div>
+          <div className="mt-2 text-slate-700">Error: {safeMessage(usersErr)}</div>
         </div>
       ) : (
         <div className="bg-white rounded-xl border border-slate-200/60 overflow-hidden">
@@ -389,7 +473,7 @@ export default function Team() {
                           <h3 className="font-medium text-slate-900 truncate">
                             {u.full_name || "No name"}
                           </h3>
-                          {getRoleBadge(u.role)}
+                          <RoleBadge role={u.role} />
                           {isSelf && <Badge className="bg-emerald-100 text-emerald-700">You</Badge>}
                         </div>
                         <p className="text-sm text-slate-500 truncate">{u.email || ""}</p>
@@ -403,7 +487,7 @@ export default function Team() {
                         className="h-9 border rounded-md px-2 text-sm"
                         value={u.role}
                         onChange={(e) => updateGlobalRole(u.id, e.target.value)}
-                        disabled={saving || isSelf}
+                        disabled={anyBusy || isSelf}
                         title={isSelf ? "You cannot change your own role here" : "Global role"}
                       >
                         <option value="user">user</option>
@@ -420,8 +504,8 @@ export default function Team() {
                           assignToWorkspace(u.id, wsId, "viewer");
                           e.target.value = "";
                         }}
-                        disabled={saving}
-                        title="Assign to workspace"
+                        disabled={anyBusy || Boolean(workspacesErr) || loadingWorkspaces}
+                        title={workspacesErr ? "Workspaces failed to load" : "Assign to workspace"}
                       >
                         <option value="">Add to workspace…</option>
                         {workspaces.map((w) => (
@@ -434,7 +518,7 @@ export default function Team() {
                       {/* Soft remove */}
                       <Button
                         variant="outline"
-                        disabled={saving || isSelf}
+                        disabled={anyBusy || isSelf}
                         onClick={() => removeUser(u.id, "soft")}
                         className="gap-2"
                         title="Remove from all workspaces (soft remove)"
@@ -446,7 +530,7 @@ export default function Team() {
                       {/* Hard delete */}
                       <Button
                         variant="destructive"
-                        disabled={saving || isSelf}
+                        disabled={anyBusy || isSelf}
                         onClick={() => removeUser(u.id, "hard")}
                         className="gap-2"
                         title="Permanently delete user"
@@ -459,11 +543,14 @@ export default function Team() {
                 </div>
               );
             })}
+
+            {filteredUsers.length === 0 && (
+              <div className="p-8 text-center text-slate-500">No team members match your search.</div>
+            )}
           </div>
         </div>
       )}
     </div>
   );
 }
-
 
