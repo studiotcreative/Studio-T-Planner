@@ -46,14 +46,14 @@ function AuthedRoutes() {
    * - anything else routes to Login
    */
   if (!user) {
-    return (
-      <Routes>
-        <Route path="/login" element={<Login />} />
-        <Route path="/auth/callback" element={<AuthCallback />} />
-        <Route path="*" element={<Login />} />
-      </Routes>
-    );
-  }
+  return (
+    <Routes>
+      <Route path="/auth/callback" element={<AuthCallback />} />
+      <Route path="/login" element={<Login />} />
+      <Route path="*" element={<Login />} />
+    </Routes>
+  );
+}
 
   /**
    * ✅ Signed in:
