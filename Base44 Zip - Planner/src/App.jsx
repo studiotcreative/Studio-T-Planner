@@ -33,14 +33,29 @@ function AuthedRoutes() {
     );
   }
 
-  // ✅ Not signed in: allow callback + set-password routes to load
+  /**
+   * ✅ ROUTE ALIASES WE SUPPORT
+   * - /auth/callback
+   * - /set-password  (our preferred)
+   * - /setpassword   (Supabase invite sometimes uses this style depending on templates)
+   * - /             (login when signed out)
+   */
+
+  // ✅ Not signed in: login lives at "/"
   if (!user) {
     return (
       <Routes>
         <Route path="/auth/callback" element={<AuthCallback />} />
+
+        {/* Password pages are allowed even if session isn’t present yet */}
         <Route path="/set-password" element={<SetPassword />} />
-        <Route path="/login" element={<Login />} />
-        <Route path="*" element={<Login />} />
+        <Route path="/setpassword" element={<SetPassword />} />
+
+        {/* Login entry */}
+        <Route path="/" element={<Login />} />
+
+        {/* Anything else while logged out → go to login */}
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     );
   }
@@ -51,6 +66,7 @@ function AuthedRoutes() {
       <Routes>
         <Route path="/auth/callback" element={<AuthCallback />} />
         <Route path="/set-password" element={<SetPassword />} />
+        <Route path="/setpassword" element={<SetPassword />} />
         <Route path="*" element={<Navigate to="/set-password" replace />} />
       </Routes>
     );
@@ -61,15 +77,10 @@ function AuthedRoutes() {
     <Routes>
       <Route path="/auth/callback" element={<AuthCallback />} />
       <Route path="/set-password" element={<SetPassword />} />
+      <Route path="/setpassword" element={<SetPassword />} />
 
-      <Route
-        path="/"
-        element={
-          <LayoutWrapper currentPageName={mainPageKey}>
-            <MainPage />
-          </LayoutWrapper>
-        }
-      />
+      {/* If someone tries "/" while signed in, send them to the app home */}
+      <Route path="/" element={<Navigate to={`/${mainPageKey ?? ""}`} replace />} />
 
       {Object.entries(Pages).map(([path, Page]) => (
         <Route
