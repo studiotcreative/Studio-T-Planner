@@ -94,29 +94,56 @@ export default function Workspaces() {
   // ---- Mutations ----
   const createMutation = useMutation({
     mutationFn: async (payload) => {
-      const { data: userRes } = await supabase.auth.getUser();
+      const { data: userRes, error: userErr } = await supabase.auth.getUser();
+      if (userErr) throw userErr;
       const userId = userRes?.user?.id ?? null;
+      if (!userId) throw new Error("No authenticated user");
 
-      const { error } = await supabase.from("workspaces").insert([
-        {
-          name: payload.name,
-          slug: payload.slug,
-          notes: payload.notes || null,
-          is_active: true,
-          created_by: userId,
-        },
-      ]);
+      // 1) Create workspace and return the inserted row (need id)
+      const { data: ws, error: wsErr } = await supabase
+        .from("workspaces")
+        .insert([
+          {
+            name: payload.name,
+            slug: payload.slug,
+            notes: payload.notes || null,
+            is_active: true,
+            created_by: userId,
+          },
+        ])
+        .select("*")
+        .single();
 
-      if (error) throw error;
+      if (wsErr) throw wsErr;
+      if (!ws?.id) throw new Error("Workspace created but no id returned");
+
+      // 2) Base44-like behavior: creator is also a workspace member
+      //    (admin-only policy allows this, and it makes membership consistent)
+      const { error: wmErr } = await supabase
+        .from("workspace_members")
+        .upsert(
+          { workspace_id: ws.id, user_id: userId, role: "account_manager" },
+          { onConflict: "workspace_id,user_id" }
+        );
+
+      if (wmErr) throw wmErr;
+
+      return ws;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["workspaces"] });
+      queryClient.invalidateQueries({ queryKey: ["members"] });
       setShowDialog(false);
       resetForm();
       toast.success("Workspace created");
     },
     onError: (err) => {
-      toast.error(err?.message || "Failed to create workspace");
+      console.error("[Workspaces] create error:", err);
+      const msg =
+        err?.message ||
+        err?.details ||
+        (typeof err === "string" ? err : "Failed to create workspace");
+      toast.error(msg);
     },
   });
 
@@ -128,6 +155,7 @@ export default function Workspaces() {
           name: data.name,
           slug: data.slug,
           notes: data.notes || null,
+          updated_at: new Date().toISOString(),
         })
         .eq("id", id);
 
@@ -140,6 +168,7 @@ export default function Workspaces() {
       toast.success("Workspace updated");
     },
     onError: (err) => {
+      console.error("[Workspaces] update error:", err);
       toast.error(err?.message || "Failed to update workspace");
     },
   });
@@ -154,6 +183,7 @@ export default function Workspaces() {
       toast.success("Workspace deleted");
     },
     onError: (err) => {
+      console.error("[Workspaces] delete error:", err);
       toast.error(err?.message || "Failed to delete workspace");
     },
   });
@@ -162,7 +192,7 @@ export default function Workspaces() {
     mutationFn: async ({ id, is_active }) => {
       const { error } = await supabase
         .from("workspaces")
-        .update({ is_active })
+        .update({ is_active, updated_at: new Date().toISOString() })
         .eq("id", id);
 
       if (error) throw error;
@@ -172,6 +202,7 @@ export default function Workspaces() {
       toast.success(variables.is_active ? "Workspace activated" : "Workspace archived");
     },
     onError: (err) => {
+      console.error("[Workspaces] toggle error:", err);
       toast.error(err?.message || "Failed to update status");
     },
   });
@@ -329,7 +360,9 @@ export default function Workspaces() {
                     </div>
                     <div>
                       <CardTitle className="text-lg">{workspace.name}</CardTitle>
-                      <p className="text-sm text-slate-500">/{workspace.slug}</p>
+                      <p className="text-sm text-slate-500">
+                        {workspace.slug ? `/${workspace.slug}` : ""}
+                      </p>
                     </div>
                   </div>
 
