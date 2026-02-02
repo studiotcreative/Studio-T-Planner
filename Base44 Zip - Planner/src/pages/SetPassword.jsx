@@ -1,76 +1,96 @@
 import React, { useState } from "react";
 import { supabase } from "@/api/supabaseClient";
+import { useAuth } from "@/components/auth/AuthProvider";
 
 export default function SetPassword() {
+  const { user, profile } = useAuth();
+
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
-  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
   const submit = async (e) => {
     e.preventDefault();
+    setError("");
 
-    if (!password || password.length < 8) {
-      alert("Password must be at least 8 characters.");
+    if (!user) {
+      setError("Invalid or expired invite. Please request a new invite.");
       return;
     }
+
+    if (password.length < 8) {
+      setError("Password must be at least 8 characters.");
+      return;
+    }
+
     if (password !== confirm) {
-      alert("Passwords do not match.");
+      setError("Passwords do not match.");
       return;
     }
 
-    setSaving(true);
-    try {
-      const { error } = await supabase.auth.updateUser({ password });
-      if (error) throw error;
+    setLoading(true);
 
-      alert("Password saved ✅ You can now log in with email + password.");
-      window.location.href = "/";
-    } catch (err) {
-      console.error(err);
-      alert(err?.message ?? "Failed to set password.");
-    } finally {
-      setSaving(false);
+    // 1) Set password
+    const { error: passErr } = await supabase.auth.updateUser({ password });
+    if (passErr) {
+      setError(passErr.message);
+      setLoading(false);
+      return;
     }
+
+    // 2) Clear flag
+    const { error: flagErr } = await supabase
+      .from("profiles")
+      .update({ must_set_password: false })
+      .eq("id", user.id);
+
+    if (flagErr) {
+      setError(flagErr.message);
+      setLoading(false);
+      return;
+    }
+
+    // 3) Sign out → force normal login
+    await supabase.auth.signOut();
+    window.location.replace("/login");
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-6 bg-slate-50">
+    <div className="min-h-screen flex items-center justify-center bg-slate-50 p-6">
       <div className="w-full max-w-md bg-white border rounded-xl p-6">
-        <h1 className="text-lg font-semibold text-slate-900">Set your password</h1>
+        <h1 className="text-xl font-semibold">Create your password</h1>
         <p className="text-sm text-slate-600 mt-1">
-          This is a one-time setup so you can log in normally next time.
+          Set a password to finish activating your account.
         </p>
 
-        <form onSubmit={submit} className="mt-5 space-y-3">
-          <div>
-            <label className="text-sm text-slate-600">New password</label>
-            <input
-              className="w-full h-10 border rounded-md px-3 mt-1"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="At least 8 characters"
-            />
-          </div>
+        <form onSubmit={submit} className="mt-4 space-y-3">
+          <input
+            type="password"
+            placeholder="New password"
+            className="w-full border rounded-lg px-3 py-2 text-sm"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+          />
 
-          <div>
-            <label className="text-sm text-slate-600">Confirm password</label>
-            <input
-              className="w-full h-10 border rounded-md px-3 mt-1"
-              type="password"
-              value={confirm}
-              onChange={(e) => setConfirm(e.target.value)}
-              placeholder="Repeat password"
-            />
-          </div>
+          <input
+            type="password"
+            placeholder="Confirm password"
+            className="w-full border rounded-lg px-3 py-2 text-sm"
+            value={confirm}
+            onChange={(e) => setConfirm(e.target.value)}
+            required
+          />
 
           <button
-            type="submit"
-            disabled={saving}
-            className="w-full h-10 rounded-md bg-slate-900 text-white disabled:opacity-60"
+            disabled={loading}
+            className="w-full bg-slate-900 text-white rounded-lg px-3 py-2 text-sm font-medium disabled:opacity-60"
           >
-            {saving ? "Saving..." : "Save password"}
+            {loading ? "Saving…" : "Save password"}
           </button>
+
+          {error && <p className="text-sm text-red-600">{error}</p>}
         </form>
       </div>
     </div>
