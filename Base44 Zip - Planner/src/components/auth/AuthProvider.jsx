@@ -9,7 +9,7 @@ const AuthContext = createContext(null);
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
 
-  // IMPORTANT: keep a real profile object for flags + role gating
+  // ✅ Keep full profile so we can enforce must_set_password + role gating
   const [profile, setProfile] = useState(null);
 
   const [userRole, setUserRole] = useState(null);
@@ -36,33 +36,30 @@ export function AuthProvider({ children }) {
         return;
       }
 
-      // 1) Profile (SOURCE OF TRUTH for global role + must_set_password)
+      // 1) Profile (SOURCE OF TRUTH)
       const { data: prof, error: profErr } = await supabase
         .from("profiles")
         .select("id, email, full_name, role, must_set_password")
         .eq("id", authUser.id)
         .maybeSingle();
 
-      if (profErr) {
-        // If profile read fails, treat as not ready and force safe state
-        console.error("Profile fetch error:", profErr);
-      }
+      if (profErr) console.error("Profile fetch error:", profErr);
 
       const globalRole = prof?.role ?? "user";
-      const mustSetPassword = prof?.must_set_password ?? false;
+      const mustSetPasswordFlag = !!prof?.must_set_password;
 
+      // Save profile in context (SetPassword + guards use this)
       setProfile(
-        prof
-          ? prof
-          : {
-              id: authUser.id,
-              email: authUser.email ?? null,
-              full_name: authUser.user_metadata?.full_name ?? authUser.email ?? "",
-              role: globalRole,
-              must_set_password: mustSetPassword,
-            }
+        prof ?? {
+          id: authUser.id,
+          email: authUser.email ?? null,
+          full_name: authUser.user_metadata?.full_name ?? authUser.email ?? "",
+          role: globalRole,
+          must_set_password: mustSetPasswordFlag,
+        }
       );
 
+      // Save user for UI
       setUser({
         ...authUser,
         full_name: prof?.full_name ?? authUser.user_metadata?.full_name ?? authUser.email,
@@ -79,7 +76,7 @@ export function AuthProvider({ children }) {
       const safeMemberships = memberships ?? [];
       setWorkspaceMemberships(safeMemberships);
 
-      // 3) Social accounts (read-only; safe after Phase 1)
+      // 3) Social accounts (read-only baseline)
       let accounts = [];
       if (globalRole === "admin") {
         const { data, error } = await supabase.from("social_accounts").select("*");
@@ -131,9 +128,8 @@ export function AuthProvider({ children }) {
   const isClient = () => userRole === "client_viewer" || userRole === "client_approver";
   const canApprove = () => isAdmin() || userRole === "client_approver";
 
-  // IMPORTANT: invite gating flag
+  // ✅ Invite gating flag (used by App.jsx guard)
   const mustSetPassword = !!profile?.must_set_password;
-  const needsPasswordSetup = () => !!user && mustSetPassword;
 
   const signOut = async () => {
     await supabase.auth.signOut();
@@ -144,11 +140,28 @@ export function AuthProvider({ children }) {
     setAssignedAccounts([]);
   };
 
+  // ✅ Keep Layout.jsx compatible (it expects copyAccessToken)
+  const copyAccessToken = async () => {
+    const { data } = await supabase.auth.getSession();
+    const token = data?.session?.access_token;
+    if (!token) return;
+
+    try {
+      await navigator.clipboard.writeText(token);
+    } catch {
+      const el = document.createElement("textarea");
+      el.value = token;
+      document.body.appendChild(el);
+      el.select();
+      document.execCommand("copy");
+      document.body.removeChild(el);
+    }
+  };
+
   const value = {
     user,
     profile,
     mustSetPassword,
-    needsPasswordSetup,
 
     userRole,
     workspaceMemberships,
@@ -161,6 +174,8 @@ export function AuthProvider({ children }) {
     canApprove,
 
     signOut,
+    copyAccessToken,
+
     refresh: () =>
       supabase.auth.getSession().then(({ data }) => loadUserData(data?.session ?? null)),
   };
