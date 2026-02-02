@@ -1,15 +1,14 @@
+// src/pages/Login.jsx
 import React, { useState } from "react";
 import { supabase } from "@/api/supabaseClient";
 
 export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [msg, setMsg] = useState("");
   const [err, setErr] = useState("");
 
   const signIn = async (e) => {
     e.preventDefault();
-    setMsg("");
     setErr("");
 
     const { error } = await supabase.auth.signInWithPassword({
@@ -17,24 +16,11 @@ export default function Login() {
       password,
     });
 
-    if (error) return setErr(error.message);
-
-    // session should exist now; App will switch to authed routes automatically
-    setMsg("Signed in.");
-  };
-
-  const signUp = async () => {
-    setMsg("");
-    setErr("");
-
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-    });
-
-    if (error) return setErr(error.message);
-
-    setMsg("Account created. Now click Sign In.");
+    if (error) {
+      setErr(error.message);
+      return;
+    }
+    // App.jsx + AuthProvider will handle routing
   };
 
   return (
@@ -68,18 +54,10 @@ export default function Login() {
             Sign in
           </button>
 
-          <button
-            type="button"
-            onClick={signUp}
-            className="w-full bg-white border rounded-lg px-3 py-2 text-sm font-medium"
-          >
-            Create account (one time)
-          </button>
-
-          {msg && <p className="text-sm text-green-700">{msg}</p>}
           {err && <p className="text-sm text-red-600">{err}</p>}
         </form>
       </div>
     </div>
   );
 }
+
