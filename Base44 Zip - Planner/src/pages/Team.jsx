@@ -3,7 +3,7 @@ import React, { useMemo, useState } from "react";
 import { supabase } from "@/api/supabaseClient";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/components/auth/AuthProvider";
-import { Search, Shield, Users, Briefcase, Plus } from "lucide-react";
+import { Search, Shield, Users, Plus, Trash2, UserX } from "lucide-react";
 
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -11,10 +11,9 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import PlatformIcon from "@/components/ui/PlatformIcon";
 
 export default function Team() {
-  const { isAdmin } = useAuth();
+  const { isAdmin, user } = useAuth(); // assumes AuthProvider exposes `user`
   const qc = useQueryClient();
 
   const [search, setSearch] = useState("");
@@ -42,22 +41,7 @@ export default function Team() {
     enabled: isAdmin(),
   });
 
-  // 2) Social accounts (for "assigned accounts" UI)
-  const { data: accounts = [] } = useQuery({
-    queryKey: ["accounts"],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("social_accounts")
-        .select("id, platform, handle, created_at")
-        .order("created_at", { ascending: true });
-
-      if (error) throw error;
-      return data ?? [];
-    },
-    enabled: isAdmin(),
-  });
-
-  // 3) Workspaces (for assignment dropdown)
+  // 2) Workspaces (for assignment dropdown)
   const { data: workspaces = [] } = useQuery({
     queryKey: ["workspaces"],
     queryFn: async () => {
@@ -92,11 +76,6 @@ export default function Team() {
     return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
   };
 
-  const getAssignedAccounts = (email) => {
-    if (!email) return [];
-    return accounts.filter((a) => a.assigned_manager_email === email);
-  };
-
   const getRoleBadge = (role) => {
     if (role === "admin") {
       return <Badge className="bg-violet-100 text-violet-700">Admin</Badge>;
@@ -107,11 +86,7 @@ export default function Team() {
   const updateGlobalRole = async (userId, newRole) => {
     setSaving(true);
     try {
-      const { error } = await supabase
-        .from("profiles")
-        .update({ role: newRole })
-        .eq("id", userId);
-
+      const { error } = await supabase.from("profiles").update({ role: newRole }).eq("id", userId);
       if (error) throw error;
 
       await qc.invalidateQueries({ queryKey: ["admin_users"] });
@@ -139,7 +114,7 @@ export default function Team() {
 
       if (error) throw error;
 
-      alert("Workspace role updated.");
+      alert("Workspace membership updated.");
     } catch (e) {
       console.error(e);
       alert(e?.message ?? "Failed to assign workspace role.");
@@ -149,15 +124,8 @@ export default function Team() {
   };
 
   /**
-   * ✅ FIXED INVITE FLOW:
-   * - Calls Edge Function: invite-user
-   * - Sends: email, global role, workspace_id, workspace_role
-   * - Edge Function should:
-   *   1) verify caller is admin
-   *   2) invite user
-   *   3) upsert profiles.role
-   *   4) upsert workspace_members (if workspace_id + workspace_role provided)
-   *   5) return { success: true, user_id }
+   * INVITE FLOW (Edge Function: invite-user)
+   * Sends: email, role, workspace_id, workspace_role
    */
   const inviteUser = async () => {
     const email = inviteEmail.trim();
@@ -172,20 +140,11 @@ export default function Team() {
         workspace_role: inviteWorkspaceId ? inviteWorkspaceRole : null,
       };
 
-      const { data, error } = await supabase.functions.invoke("invite-user", {
-        body: payload,
-      });
-
-      if (error) {
-        // Supabase function invoke errors often include a generic message.
-        // This logs the full object for debugging.
-        console.error("Edge Function error:", error);
-        throw error;
-      }
+      const { data, error } = await supabase.functions.invoke("invite-user", { body: payload });
+      if (error) throw error;
 
       const invitedUserId = data?.user_id ?? null;
 
-      // Refresh admin list
       await qc.invalidateQueries({ queryKey: ["admin_users"] });
 
       // Reset form
@@ -194,11 +153,7 @@ export default function Team() {
       setInviteWorkspaceId("");
       setInviteWorkspaceRole("viewer");
 
-      alert(
-        invitedUserId
-          ? "Invite sent. User was assigned (if workspace selected)."
-          : "Invite sent."
-      );
+      alert(invitedUserId ? "Invite sent ✅" : "Invite sent ✅");
     } catch (e) {
       console.error(e);
       alert(e?.message ?? "Invite failed. Check console.");
@@ -207,20 +162,59 @@ export default function Team() {
     }
   };
 
+  /**
+   * REMOVE USER ACCESS (SOFT) / DELETE USER (HARD)
+   * Edge Function: delete-user
+   * body: { user_id, mode: "soft" | "hard" }
+   */
+  const removeUser = async (targetUserId, mode) => {
+    if (!targetUserId) return;
+
+    // prevent self-remove
+    if (user?.id && targetUserId === user.id) {
+      alert("You cannot remove yourself.");
+      return;
+    }
+
+    const confirmText =
+      mode === "hard"
+        ? "This will permanently delete the user (cannot be undone). Type DELETE to confirm:"
+        : "This will remove the user from ALL workspaces (they will lose access). Type REMOVE to confirm:";
+
+    const required =
+      mode === "hard" ? "DELETE" : "REMOVE";
+
+    const typed = window.prompt(confirmText);
+    if (typed !== required) return;
+
+    setSaving(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("delete-user", {
+        body: { user_id: targetUserId, mode },
+      });
+
+      if (error) throw error;
+
+      await qc.invalidateQueries({ queryKey: ["admin_users"] });
+      alert(mode === "hard" ? "User deleted ✅" : "User access removed ✅");
+      console.log("delete-user result:", data);
+    } catch (e) {
+      console.error(e);
+      alert(e?.message ?? "Failed to remove user.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   if (!isAdmin()) {
     return (
       <div className="max-w-[1200px] mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <p className="text-center text-slate-500">
-          You don't have access to this page.
-        </p>
+        <p className="text-center text-slate-500">You don't have access to this page.</p>
       </div>
     );
   }
 
   const adminCount = users.filter((u) => u.role === "admin").length;
-  const accountManagerCount = new Set(
-    accounts.map((a) => a.assigned_manager_email).filter(Boolean)
-  ).size;
 
   return (
     <div className="max-w-[1200px] mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -242,7 +236,7 @@ export default function Team() {
             <div>
               <p className="font-semibold text-slate-900">Invite a new member</p>
               <p className="text-sm text-slate-500">
-                Invites the user, sets global role, and assigns them to a workspace (optional).
+                Sends invite email, sets global role, and optionally assigns a workspace membership immediately.
               </p>
             </div>
           </div>
@@ -329,7 +323,7 @@ export default function Team() {
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+      <div className="grid grid-cols-2 lg:grid-cols-2 gap-4 mb-8">
         <Card className="bg-white border-slate-200/60">
           <CardContent className="p-5">
             <div className="flex items-center justify-between">
@@ -357,34 +351,6 @@ export default function Team() {
             </div>
           </CardContent>
         </Card>
-
-        <Card className="bg-white border-slate-200/60">
-          <CardContent className="p-5">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-slate-500">Account Managers</p>
-                <p className="text-2xl font-bold text-slate-900">{accountManagerCount}</p>
-              </div>
-              <div className="w-10 h-10 rounded-xl bg-blue-100 flex items-center justify-center">
-                <Briefcase className="w-5 h-5 text-blue-600" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="bg-white border-slate-200/60">
-          <CardContent className="p-5">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-slate-500">Workspaces</p>
-                <p className="text-2xl font-bold text-slate-900">{workspaces.length}</p>
-              </div>
-              <div className="w-10 h-10 rounded-xl bg-emerald-100 flex items-center justify-center">
-                <Users className="w-5 h-5 text-emerald-600" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
       </div>
 
       {/* Team List */}
@@ -396,58 +362,61 @@ export default function Team() {
         </div>
       ) : usersErr ? (
         <div className="text-red-600 text-sm bg-white border rounded-xl p-4">
-          Failed to load users. This is usually missing the Admin RPC or policies.
-          <div className="mt-2 text-slate-700">
-            Error: {String(usersErr?.message ?? usersErr)}
-          </div>
+          Failed to load users.
+          <div className="mt-2 text-slate-700">Error: {String(usersErr?.message ?? usersErr)}</div>
         </div>
       ) : (
         <div className="bg-white rounded-xl border border-slate-200/60 overflow-hidden">
           <div className="divide-y divide-slate-100">
-            {filteredUsers.map((user) => {
-              const assignedAccounts = getAssignedAccounts(user.email);
+            {filteredUsers.map((u) => {
+              const isSelf = user?.id && u.id === user.id;
 
               return (
-                <div key={user.id} className="p-4 hover:bg-slate-50 transition-colors">
+                <div key={u.id} className="p-4 hover:bg-slate-50 transition-colors">
                   <div className="flex items-center justify-between gap-4">
                     <div className="flex items-center gap-4 min-w-0">
                       <Avatar className="w-12 h-12">
                         <AvatarFallback className="bg-gradient-to-br from-violet-500 to-indigo-500 text-white font-medium">
-                          {getInitials(user.full_name || user.email)}
+                          {getInitials(u.full_name || u.email)}
                         </AvatarFallback>
                       </Avatar>
 
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
                           <h3 className="font-medium text-slate-900 truncate">
-                            {user.full_name || "No name"}
+                            {u.full_name || "No name"}
                           </h3>
-                          {getRoleBadge(user.role)}
+                          {getRoleBadge(u.role)}
+                          {isSelf && (
+                            <Badge className="bg-emerald-100 text-emerald-700">You</Badge>
+                          )}
                         </div>
-                        <p className="text-sm text-slate-500 truncate">{user.email || ""}</p>
+                        <p className="text-sm text-slate-500 truncate">{u.email || ""}</p>
                       </div>
                     </div>
 
                     {/* Actions */}
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center justify-end gap-2">
+                      {/* Global role */}
                       <select
                         className="h-9 border rounded-md px-2 text-sm"
-                        value={user.role}
-                        onChange={(e) => updateGlobalRole(user.id, e.target.value)}
-                        disabled={saving}
-                        title="Global role"
+                        value={u.role}
+                        onChange={(e) => updateGlobalRole(u.id, e.target.value)}
+                        disabled={saving || isSelf}
+                        title={isSelf ? "You cannot change your own role here" : "Global role"}
                       >
                         <option value="user">user</option>
                         <option value="admin">admin</option>
                       </select>
 
+                      {/* Add to workspace */}
                       <select
                         className="h-9 border rounded-md px-2 text-sm"
                         defaultValue=""
                         onChange={(e) => {
                           const wsId = e.target.value;
                           if (!wsId) return;
-                          assignToWorkspace(user.id, wsId, "viewer");
+                          assignToWorkspace(u.id, wsId, "viewer");
                           e.target.value = "";
                         }}
                         disabled={saving}
@@ -460,31 +429,32 @@ export default function Team() {
                           </option>
                         ))}
                       </select>
+
+                      {/* Soft remove */}
+                      <Button
+                        variant="outline"
+                        disabled={saving || isSelf}
+                        onClick={() => removeUser(u.id, "soft")}
+                        title="Remove from all workspaces (soft remove)"
+                        className="gap-2"
+                      >
+                        <UserX className="w-4 h-4" />
+                        Remove access
+                      </Button>
+
+                      {/* Hard delete */}
+                      <Button
+                        variant="destructive"
+                        disabled={saving || isSelf}
+                        onClick={() => removeUser(u.id, "hard")}
+                        title="Permanently delete user"
+                        className="gap-2"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                        Delete
+                      </Button>
                     </div>
                   </div>
-
-                  {/* Assigned accounts */}
-                  {assignedAccounts.length > 0 && (
-                    <div className="mt-3 pt-3 border-t border-slate-100">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-sm text-slate-500 mr-2">Assigned accounts:</span>
-                        {assignedAccounts.slice(0, 6).map((account) => (
-                          <div
-                            key={account.id}
-                            className="flex items-center gap-1 px-2 py-1 bg-slate-100 rounded-full text-xs"
-                          >
-                            <PlatformIcon platform={account.platform} size="sm" />
-                            @{account.handle}
-                          </div>
-                        ))}
-                        {assignedAccounts.length > 6 && (
-                          <span className="text-xs text-slate-500">
-                            +{assignedAccounts.length - 6} more
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  )}
                 </div>
               );
             })}
