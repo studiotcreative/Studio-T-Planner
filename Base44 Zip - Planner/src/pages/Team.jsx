@@ -33,7 +33,6 @@ export default function Team() {
   } = useQuery({
     queryKey: ["admin_users"],
     queryFn: async () => {
-      // RPC returns: id, email, full_name, role, created_at
       const { data, error } = await supabase.rpc("admin_list_users");
       if (error) throw error;
       return data ?? [];
@@ -86,9 +85,12 @@ export default function Team() {
   const updateGlobalRole = async (userId, newRole) => {
     setSaving(true);
     try {
-      const { error } = await supabase.from("profiles").update({ role: newRole }).eq("id", userId);
-      if (error) throw error;
+      const { error } = await supabase
+        .from("profiles")
+        .update({ role: newRole })
+        .eq("id", userId);
 
+      if (error) throw error;
       await qc.invalidateQueries({ queryKey: ["admin_users"] });
     } catch (e) {
       console.error(e);
@@ -113,7 +115,6 @@ export default function Team() {
       );
 
       if (error) throw error;
-
       alert("Workspace membership updated.");
     } catch (e) {
       console.error(e);
@@ -143,8 +144,6 @@ export default function Team() {
       const { data, error } = await supabase.functions.invoke("invite-user", { body: payload });
       if (error) throw error;
 
-      const invitedUserId = data?.user_id ?? null;
-
       await qc.invalidateQueries({ queryKey: ["admin_users"] });
 
       // Reset form
@@ -153,7 +152,7 @@ export default function Team() {
       setInviteWorkspaceId("");
       setInviteWorkspaceRole("viewer");
 
-      alert(invitedUserId ? "Invite sent ✅" : "Invite sent ✅");
+      alert(data?.user_id ? "Invite sent ✅" : "Invite sent ✅");
     } catch (e) {
       console.error(e);
       alert(e?.message ?? "Invite failed. Check console.");
@@ -166,6 +165,8 @@ export default function Team() {
    * REMOVE USER ACCESS (SOFT) / DELETE USER (HARD)
    * Edge Function: delete-user
    * body: { user_id, mode: "soft" | "hard" }
+   *
+   * ✅ FIX: explicitly attach Authorization header (prevents 401)
    */
   const removeUser = async (targetUserId, mode) => {
     if (!targetUserId) return;
@@ -181,16 +182,22 @@ export default function Team() {
         ? "This will permanently delete the user (cannot be undone). Type DELETE to confirm:"
         : "This will remove the user from ALL workspaces (they will lose access). Type REMOVE to confirm:";
 
-    const required =
-      mode === "hard" ? "DELETE" : "REMOVE";
-
+    const required = mode === "hard" ? "DELETE" : "REMOVE";
     const typed = window.prompt(confirmText);
     if (typed !== required) return;
 
     setSaving(true);
     try {
+      // ✅ Get session token explicitly
+      const { data: sessionRes, error: sessionErr } = await supabase.auth.getSession();
+      if (sessionErr) throw sessionErr;
+
+      const token = sessionRes?.session?.access_token;
+      if (!token) throw new Error("No access token found. Please log in again.");
+
       const { data, error } = await supabase.functions.invoke("delete-user", {
         body: { user_id: targetUserId, mode },
+        headers: { Authorization: `Bearer ${token}` },
       });
 
       if (error) throw error;
@@ -299,11 +306,7 @@ export default function Team() {
             <div className="md:col-span-3" />
 
             <div className="flex items-end">
-              <Button
-                disabled={saving || !inviteEmail.trim()}
-                onClick={inviteUser}
-                className="w-full"
-              >
+              <Button disabled={saving || !inviteEmail.trim()} onClick={inviteUser} className="w-full">
                 {saving ? "Working..." : "Invite"}
               </Button>
             </div>
@@ -387,9 +390,7 @@ export default function Team() {
                             {u.full_name || "No name"}
                           </h3>
                           {getRoleBadge(u.role)}
-                          {isSelf && (
-                            <Badge className="bg-emerald-100 text-emerald-700">You</Badge>
-                          )}
+                          {isSelf && <Badge className="bg-emerald-100 text-emerald-700">You</Badge>}
                         </div>
                         <p className="text-sm text-slate-500 truncate">{u.email || ""}</p>
                       </div>
@@ -435,8 +436,8 @@ export default function Team() {
                         variant="outline"
                         disabled={saving || isSelf}
                         onClick={() => removeUser(u.id, "soft")}
-                        title="Remove from all workspaces (soft remove)"
                         className="gap-2"
+                        title="Remove from all workspaces (soft remove)"
                       >
                         <UserX className="w-4 h-4" />
                         Remove access
@@ -447,8 +448,8 @@ export default function Team() {
                         variant="destructive"
                         disabled={saving || isSelf}
                         onClick={() => removeUser(u.id, "hard")}
-                        title="Permanently delete user"
                         className="gap-2"
+                        title="Permanently delete user"
                       >
                         <Trash2 className="w-4 h-4" />
                         Delete
