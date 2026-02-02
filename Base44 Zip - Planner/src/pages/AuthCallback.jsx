@@ -4,23 +4,33 @@ import { supabase } from "@/api/supabaseClient";
 export default function AuthCallback() {
   useEffect(() => {
     const run = async () => {
-      // finalize magic-link session
-      await supabase.auth.getSession();
-
-      // If this callback came from an INVITE or RECOVERY link, force Set Password
       const url = new URL(window.location.href);
 
-      // Supabase magic links often include type in query or hash.
+      // 1) If PKCE code is present, exchange it for a session
+      const code = url.searchParams.get("code");
+      if (code) {
+        const { error } = await supabase.auth.exchangeCodeForSession(code);
+        if (error) {
+          // If this fails, send to login (or show error UI)
+          window.location.replace(`/login`);
+          return;
+        }
+      } else {
+        // 2) Otherwise rely on implicit hash/session parsing
+        await supabase.auth.getSession();
+      }
+
+      // read invite/recovery type from query or hash
       const typeFromQuery = url.searchParams.get("type");
       const typeFromHash = new URLSearchParams(url.hash.replace("#", "")).get("type");
       const type = typeFromQuery || typeFromHash;
 
       if (type === "invite" || type === "recovery") {
-        window.location.href = "/set-password";
+        window.location.replace("/set-password");
         return;
       }
 
-      window.location.href = "/";
+      window.location.replace("/");
     };
 
     run();
