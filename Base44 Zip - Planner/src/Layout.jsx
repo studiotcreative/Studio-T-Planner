@@ -51,7 +51,7 @@ function LayoutContent({ children, currentPageName }) {
     try {
       await signOut();
     } finally {
-      window.location.href = "/";
+      window.location.href = "/login";
     }
   };
 
