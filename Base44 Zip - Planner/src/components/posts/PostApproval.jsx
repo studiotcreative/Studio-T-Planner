@@ -4,7 +4,13 @@ import { supabase } from "@/api/supabaseClient";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { format, parseISO } from "date-fns";
-import { CheckCircle2, XCircle, MessageSquare, AlertCircle, Loader2 } from "lucide-react";
+import {
+  CheckCircle2,
+  XCircle,
+  MessageSquare,
+  AlertCircle,
+  Loader2,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -20,6 +26,7 @@ import { toast } from "sonner";
 export default function PostApproval({ post, onUpdate }) {
   const auth = useAuth();
   const queryClient = useQueryClient();
+  const user = auth?.user;
 
   // Normalize auth helpers (some versions expose functions vs booleans)
   const isClientFn = useMemo(() => {
@@ -32,23 +39,22 @@ export default function PostApproval({ post, onUpdate }) {
     return () => !!auth?.canApprove;
   }, [auth]);
 
-  const user = auth?.user;
-
   const [showRejectDialog, setShowRejectDialog] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
 
-  // ✅ Only clients should see this component
+  // Only clients should see this component at all
   if (!isClientFn()) return null;
 
-  // We only care about these client-visible states
-  const isAwaitingApproval = post?.status === "wait_for_approval";
-  const isChangesRequested = post?.status === "changes_requested";
-  const isReadyToPost = post?.status === "ready_to_post";
-  const isCompleted = post?.status === "completed";
+  // Clients never see approval UI for drafts
+  if (!post || post.status === "draft") return null;
 
-  // If post is draft, clients should not see approval UI at all.
-  if (post?.status === "draft") return null;
+  // Status flags (standardized set)
+  const isAwaitingApproval = post.status === "wait_for_approval";
+  const isChangesRequested = post.status === "changes_requested";
+  const isReadyToPost = post.status === "ready_to_post";
+  const isCompleted = post.status === "completed";
 
+  // ---- Best-effort helpers (do not block primary flow) ----
   const safeInsertAuditLog = async (action, details) => {
     try {
       const { error } = await supabase.from("audit_logs").insert({
@@ -59,52 +65,29 @@ export default function PostApproval({ post, onUpdate }) {
         actor_user_id: user?.id ?? null,
         actor_email: user?.email ?? null,
         actor_name: user?.full_name ?? null,
-        details: JSON.stringify(details),
+        details: JSON.stringify(details ?? {}),
         created_at: new Date().toISOString(),
       });
-
       if (error) console.warn("[audit_logs] insert failed:", error.message);
     } catch (e) {
       console.warn("[audit_logs] skipped:", e?.message);
     }
   };
 
-  const updateMutation = useMutation({
-  mutationFn: async ({ decision, comment }) => {
-    const { data, error } = await supabase.rpc("rpc_client_decide_post", {
-      p_post_id: post.id,
-      p_decision: decision, // 'approve' | 'request_changes'
-      p_comment: comment ?? null,
-    });
-
-    if (error) throw error;
-    return data;
-  },
-  onSuccess: () => {
-    queryClient.invalidateQueries({ queryKey: ["posts"] });
-    queryClient.invalidateQueries({ queryKey: ["post", post.id] });
-    toast.success("Post updated");
-    onUpdate?.();
-  },
-  onError: (e) => {
-    console.error(e);
-    toast.error(e?.message || "Failed to update post");
-  },
-});
-
-  // Best-effort comment insert that works even if your comments schema differs.
+  // Best-effort comment insert that works even if schema differs
   const safeCreateComment = async (content) => {
     if (!content?.trim()) return;
 
-    // Attempt #1: rich schema (if your comments table has workspace_id/is_internal/etc.)
+    // Attempt #1: "rich" schema
     try {
       const { error } = await supabase.from("comments").insert({
         post_id: post.id,
         workspace_id: post.workspace_id,
-        author_id: user?.id ?? null,
+        user_id: user?.id ?? null, // some schemas use user_id
+        author_id: user?.id ?? null, // some schemas use author_id
         content,
+        is_client: true,
         is_internal: false,
-        is_resolved: false,
         created_at: new Date().toISOString(),
       });
 
@@ -112,18 +95,15 @@ export default function PostApproval({ post, onUpdate }) {
         queryClient.invalidateQueries({ queryKey: ["comments", post.id] });
         return;
       }
-
-      // If error, fall through to attempt #2
       console.warn("[comments] rich insert failed:", error.message);
     } catch (e) {
       console.warn("[comments] rich insert exception:", e?.message);
     }
 
-    // Attempt #2: minimal schema (post_id, author_id, content)
+    // Attempt #2: minimal schema
     try {
       const { error } = await supabase.from("comments").insert({
         post_id: post.id,
-        author_id: user?.id ?? null,
         content,
       });
 
@@ -138,56 +118,51 @@ export default function PostApproval({ post, onUpdate }) {
     }
   };
 
+  // ---- RPC mutation (required by DB guard) ----
+  const updateMutation = useMutation({
+    mutationFn: async ({ decision, comment }) => {
+      const { data, error } = await supabase.rpc("rpc_client_decide_post", {
+        p_post_id: post.id,
+        p_decision: decision, // 'approve' | 'request_changes'
+        p_comment: comment ?? null,
+      });
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["posts"] });
+      queryClient.invalidateQueries({ queryKey: ["post", post.id] });
+      toast.success("Post updated");
+      onUpdate?.();
+    },
+    onError: (e) => {
+      console.error(e);
+      toast.error(e?.message || "Failed to update post");
+    },
+  });
+
+  // ---- Actions ----
   const handleApprove = async () => {
-  if (!user?.id) {
-    toast.error("You must be logged in.");
-    return;
-  }
-  if (!isAwaitingApproval) {
-    toast.error("This post is not awaiting approval.");
-    return;
-  }
+    if (!user?.id) {
+      toast.error("You must be logged in.");
+      return;
+    }
+    if (!isAwaitingApproval) {
+      toast.error("This post is not awaiting approval.");
+      return;
+    }
 
-  await updateMutation
-    .mutateAsync({
-      decision: "approve",
-      comment: null,
-    })
-    .catch(() => {});
+    await updateMutation
+      .mutateAsync({ decision: "approve", comment: null })
+      .catch(() => {});
 
-  await safeInsertAuditLog("approved", {
-    action: "Client approved post",
-    approved_by: user.full_name ?? user.email ?? user.id,
-  });
+    await safeInsertAuditLog("approved", {
+      action: "Client approved post",
+      approved_by: user.full_name ?? user.email ?? user.id,
+    });
 
-  toast.success("Approved! Post is now Ready to Post.");
-};
-
-const handleRequestChanges = async () => {
-  if (!user?.id) {
-    toast.error("You must be logged in.");
-    return;
-  }
-  if (!isAwaitingApproval) {
-    toast.error("This post is not awaiting approval.");
-    return;
-  }
-
-  await updateMutation
-    .mutateAsync({
-      decision: "request_changes",
-      comment: rejectReason?.trim() || null,
-    })
-    .catch(() => {});
-
-  await safeInsertAuditLog("changes_requested", {
-    action: "Client requested changes",
-    requested_by: user.full_name ?? user.email ?? user.id,
-    comment: rejectReason?.trim() || null,
-  });
-
-  toast.success("Changes requested. The team has been notified.");
-};
+    toast.success("Approved! Post is now Ready to Post.");
+  };
 
   const handleRequestChanges = async () => {
     if (!user?.id) {
@@ -199,21 +174,20 @@ const handleRequestChanges = async () => {
       return;
     }
 
+    const reason = rejectReason?.trim() || null;
+
     await updateMutation
-      .mutateAsync({
-        status: "changes_requested",
-        approval_status: "changes_requested",
-      })
+      .mutateAsync({ decision: "request_changes", comment: reason })
       .catch(() => {});
 
-    if (rejectReason?.trim()) {
-      await safeCreateComment(`Client requested changes: ${rejectReason.trim()}`);
+    if (reason) {
+      await safeCreateComment(`Client requested changes: ${reason}`);
     }
 
     await safeInsertAuditLog("changes_requested", {
       action: "Client requested changes",
-      reason: rejectReason,
-      by: user.full_name ?? user.email ?? user.id,
+      requested_by: user.full_name ?? user.email ?? user.id,
+      comment: reason,
     });
 
     setShowRejectDialog(false);
@@ -221,11 +195,13 @@ const handleRequestChanges = async () => {
     toast.info("Changes requested");
   };
 
-  // ✅ Client “status cards” (always visible when relevant)
+  // ---- Status cards (client-visible) ----
   if (isReadyToPost || (post?.approval_status === "approved" && post?.approved_at)) {
     let approvedDate = "";
     try {
-      approvedDate = post?.approved_at ? format(parseISO(post.approved_at), "MMM d, yyyy") : "";
+      approvedDate = post?.approved_at
+        ? format(parseISO(post.approved_at), "MMM d, yyyy")
+        : "";
     } catch {
       approvedDate = "";
     }
@@ -237,7 +213,7 @@ const handleRequestChanges = async () => {
           <div>
             <p className="font-medium text-emerald-800">Approved</p>
             <p className="text-sm text-emerald-600">
-              {post?.approved_by ? `Approved by team • ` : ""}{approvedDate ? `on ${approvedDate}` : ""}
+              {approvedDate ? `Approved on ${approvedDate}` : "Approved"}
             </p>
             <p className="text-sm text-emerald-600 mt-1">
               Status: <span className="font-medium">Ready to Post</span>
@@ -269,17 +245,17 @@ const handleRequestChanges = async () => {
           <AlertCircle className="w-5 h-5 text-amber-600" />
           <div>
             <p className="font-medium text-amber-800">Changes Requested</p>
-            <p className="text-sm text-amber-600">Please review the comments and update the post.</p>
+            <p className="text-sm text-amber-600">
+              The team will update the post based on your feedback.
+            </p>
           </div>
         </div>
       </div>
     );
   }
 
-  // ✅ Approval buttons ONLY when client can approve AND post is waiting_for_approval
-  if (!canApproveFn() || !isAwaitingApproval) {
-    return null;
-  }
+  // Buttons ONLY if client can approve AND post is waiting for approval
+  if (!canApproveFn() || !isAwaitingApproval) return null;
 
   return (
     <>
@@ -298,6 +274,7 @@ const handleRequestChanges = async () => {
               variant="outline"
               className="border-amber-300 text-amber-700 hover:bg-amber-50"
               onClick={() => setShowRejectDialog(true)}
+              disabled={updateMutation.isPending}
             >
               <XCircle className="w-4 h-4 mr-2" />
               Request Changes
@@ -334,7 +311,11 @@ const handleRequestChanges = async () => {
           />
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowRejectDialog(false)}>
+            <Button
+              variant="outline"
+              onClick={() => setShowRejectDialog(false)}
+              disabled={updateMutation.isPending}
+            >
               Cancel
             </Button>
             <Button
@@ -342,7 +323,9 @@ const handleRequestChanges = async () => {
               disabled={updateMutation.isPending}
               className="bg-amber-600 hover:bg-amber-700"
             >
-              {updateMutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+              {updateMutation.isPending && (
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              )}
               Submit Request
             </Button>
           </DialogFooter>
