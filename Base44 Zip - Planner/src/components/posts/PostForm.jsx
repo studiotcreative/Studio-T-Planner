@@ -53,7 +53,6 @@ export default function PostForm({
     platform: '',
     scheduled_date: initialDate || '',
     scheduled_time: '',
-    status: 'draft',
     caption: '',
     hashtags: '',
     first_comment: '',
@@ -116,7 +115,6 @@ export default function PostForm({
         platform: post.platform || '',
         scheduled_date: post.scheduled_date || '',
         scheduled_time: post.scheduled_time || '',
-        status: post.status || 'draft',
         caption: post.caption || '',
         hashtags: post.hashtags || '',
         first_comment: post.first_comment || '',
@@ -256,13 +254,17 @@ export default function PostForm({
   };
 
   const handleSubmit = (e) => {
-    e.preventDefault();
-    if (!formData.social_account_id) {
-      toast.error('Please select an account');
-      return;
-    }
-    onSave(formData);
-  };
+  e.preventDefault();
+  if (!formData.social_account_id) {
+    toast.error("Please select an account");
+    return;
+  }
+
+  // Status/approval fields are controlled by PostEditor header + RPC flows
+  const { status, approval_status, approved_by, approved_at, ...safeData } = formData;
+
+  onSave(safeData);
+};
 
   const selectedAccount = accounts.find(a => a.id === formData.social_account_id);
   const selectedWorkspace = workspaces.find(w => w.id === formData.workspace_id);
@@ -297,42 +299,7 @@ export default function PostForm({
             </Select>
           </div>
 
-          <div>
-            <Label>Status</Label>
-            <Select
-              value={formData.status}
-              onValueChange={(v) => setFormData(prev => ({ ...prev, status: v }))}
-              disabled={isClient()}
-            >
-              <SelectTrigger className="mt-1.5">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {Object.entries(statusConfig).map(([key, config]) => (
-                  <SelectItem key={key} value={key}>
-                    <div className="flex items-center gap-2">
-                      <config.icon className="w-4 h-4" />
-                      {config.label}
-                    </div>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div>
-            <Label>Scheduled Date</Label>
-            <div className="relative mt-1.5">
-              <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-              <Input
-                type="date"
-                value={formData.scheduled_date}
-                onChange={(e) => setFormData(prev => ({ ...prev, scheduled_date: e.target.value }))}
-                className="pl-10"
-                disabled={isClient()}
-              />
-            </div>
-          </div>
+          {/* Status is controlled by the header dropdown in PostEditor (RPC). */}
 
           <div>
             <Label>Scheduled Time</Label>
