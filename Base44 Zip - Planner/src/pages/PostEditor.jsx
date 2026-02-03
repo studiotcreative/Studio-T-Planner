@@ -141,26 +141,27 @@ export default function PostEditor() {
 
   // ✅ Team Status mutation (the missing “team flow”)
   const statusMutation = useMutation({
-    mutationFn: async (nextStatus) => {
-      if (!postId) throw new Error("Missing post id");
-      const { error } = await supabase
-        .from("posts")
-        .update({ status: nextStatus })
-        .eq("id", postId);
+  mutationFn: async (nextStatus) => {
+    if (!postId) throw new Error("Missing post id");
 
-      if (error) throw error;
-      return nextStatus;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["posts"] });
-      queryClient.invalidateQueries({ queryKey: ["post", postId] });
-      toast.success("Status updated");
-    },
-    onError: (e) => {
-      console.error(e);
-      toast.error("Failed to update status");
-    },
-  });
+    const { data, error } = await supabase.rpc("rpc_set_post_status", {
+      p_post_id: postId,
+      p_next_status: nextStatus,
+    });
+
+    if (error) throw error;
+    return data;
+  },
+  onSuccess: () => {
+    queryClient.invalidateQueries({ queryKey: ["posts"] });
+    queryClient.invalidateQueries({ queryKey: ["post", postId] });
+    toast.success("Status updated");
+  },
+  onError: (e) => {
+    console.error(e);
+    toast.error(e?.message || "Failed to update status");
+  },
+});
 
   const handleSave = (formData) => {
     if (!user?.id) {
