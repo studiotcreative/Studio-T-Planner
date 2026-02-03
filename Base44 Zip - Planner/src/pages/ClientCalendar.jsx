@@ -175,32 +175,36 @@ export default function ClientCalendar() {
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-        <div className="bg-white rounded-xl border border-slate-200/60 p-4">
-          <p className="text-sm text-slate-500">Awaiting Your Approval</p>
-          <p className="text-2xl font-bold text-blue-600 mt-1">
-            {posts.filter((p) => p.status === "sent_to_client").length}
-          </p>
-        </div>
-        <div className="bg-white rounded-xl border border-slate-200/60 p-4">
-          <p className="text-sm text-slate-500">Approved</p>
-          <p className="text-2xl font-bold text-emerald-600 mt-1">
-            {posts.filter((p) => p.status === "approved" || p.status === "ready_to_post").length}
-          </p>
-        </div>
-        <div className="bg-white rounded-xl border border-slate-200/60 p-4">
-          <p className="text-sm text-slate-500">In Review</p>
-          <p className="text-2xl font-bold text-amber-600 mt-1">
-            {posts.filter((p) => p.status === "internal_review").length}
-          </p>
-        </div>
-        <div className="bg-white rounded-xl border border-slate-200/60 p-4">
-          <p className="text-sm text-slate-500">Posted</p>
-          <p className="text-2xl font-bold text-green-600 mt-1">
-            {posts.filter((p) => p.status === "posted").length}
-          </p>
-        </div>
-      </div>
+<div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+  <div className="bg-white rounded-xl border border-slate-200/60 p-4">
+    <p className="text-sm text-slate-500">Awaiting Approval</p>
+    <p className="text-2xl font-bold text-blue-600 mt-1">
+      {posts.filter((p) => p.status === "wait_for_approval").length}
+    </p>
+  </div>
+
+  <div className="bg-white rounded-xl border border-slate-200/60 p-4">
+    <p className="text-sm text-slate-500">Changes Requested</p>
+    <p className="text-2xl font-bold text-amber-600 mt-1">
+      {posts.filter((p) => p.status === "changes_requested").length}
+    </p>
+  </div>
+
+  <div className="bg-white rounded-xl border border-slate-200/60 p-4">
+    <p className="text-sm text-slate-500">Ready to Post</p>
+    <p className="text-2xl font-bold text-emerald-600 mt-1">
+      {posts.filter((p) => p.status === "ready_to_post").length}
+    </p>
+  </div>
+
+  <div className="bg-white rounded-xl border border-slate-200/60 p-4">
+    <p className="text-sm text-slate-500">Completed</p>
+    <p className="text-2xl font-bold text-green-600 mt-1">
+      {posts.filter((p) => p.status === "completed").length}
+    </p>
+  </div>
+</div>
+
 
       {/* Calendar */}
       {isLoading ? (
