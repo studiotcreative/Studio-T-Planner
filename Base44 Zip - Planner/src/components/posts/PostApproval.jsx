@@ -75,48 +75,74 @@ export default function PostApproval({ post, onUpdate }) {
   };
 
   // Best-effort comment insert that works even if schema differs
-  const safeCreateComment = async (content) => {
-    if (!content?.trim()) return;
+const safeCreateComment = async (content) => {
+  const text = (content || "").trim();
+  if (!text) return;
 
-    // Attempt #1: "rich" schema
-    try {
-      const { error } = await supabase.from("comments").insert({
-        post_id: post.id,
-        workspace_id: post.workspace_id,
-        user_id: user?.id ?? null, // some schemas use user_id
-        author_id: user?.id ?? null, // some schemas use author_id
-        content,
-        is_client: true,
-        is_internal: false,
-        created_at: new Date().toISOString(),
-      });
+  // workspace_id is REQUIRED by your schema (NOT NULL)
+  if (!post?.workspace_id) {
+    console.warn("[comments] missing post.workspace_id");
+    return;
+  }
 
-      if (!error) {
-        queryClient.invalidateQueries({ queryKey: ["comments", post.id] });
-        return;
-      }
-      console.warn("[comments] rich insert failed:", error.message);
-    } catch (e) {
-      console.warn("[comments] rich insert exception:", e?.message);
-    }
+  // Attempt #1: schema with author_id
+  try {
+    const { error } = await supabase.from("comments").insert({
+      post_id: post.id,
+      workspace_id: post.workspace_id,
+      author_id: user?.id ?? null,
+      content: text,
+      is_internal: false,
+      created_at: new Date().toISOString(),
+    });
 
-    // Attempt #2: minimal schema
-    try {
-      const { error } = await supabase.from("comments").insert({
-        post_id: post.id,
-        content,
-      });
-
-      if (error) {
-        console.warn("[comments] minimal insert failed:", error.message);
-        return;
-      }
-
+    if (!error) {
       queryClient.invalidateQueries({ queryKey: ["comments", post.id] });
-    } catch (e) {
-      console.warn("[comments] minimal insert exception:", e?.message);
+      return;
     }
-  };
+    console.warn("[comments] insert(author_id) failed:", error.message);
+  } catch (e) {
+    console.warn("[comments] insert(author_id) exception:", e?.message);
+  }
+
+  // Attempt #2: schema with user_id
+  try {
+    const { error } = await supabase.from("comments").insert({
+      post_id: post.id,
+      workspace_id: post.workspace_id,
+      user_id: user?.id ?? null,
+      content: text,
+      is_internal: false,
+      created_at: new Date().toISOString(),
+    });
+
+    if (!error) {
+      queryClient.invalidateQueries({ queryKey: ["comments", post.id] });
+      return;
+    }
+    console.warn("[comments] insert(user_id) failed:", error.message);
+  } catch (e) {
+    console.warn("[comments] insert(user_id) exception:", e?.message);
+  }
+
+  // Attempt #3: minimum required (still includes workspace_id)
+  try {
+    const { error } = await supabase.from("comments").insert({
+      post_id: post.id,
+      workspace_id: post.workspace_id,
+      content: text,
+    });
+
+    if (error) {
+      console.warn("[comments] minimal insert failed:", error.message);
+      return;
+    }
+
+    queryClient.invalidateQueries({ queryKey: ["comments", post.id] });
+  } catch (e) {
+    console.warn("[comments] minimal insert exception:", e?.message);
+  }
+};
 
   // ---- RPC mutation (required by DB guard) ----
   const updateMutation = useMutation({
