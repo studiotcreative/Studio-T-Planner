@@ -158,6 +158,7 @@ export default function PostForm({
   };
 
   const handleFileUpload = async (e) => {
+    console.log("[UPLOAD] handleFileUpload start", e?.target?.files);
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
 
