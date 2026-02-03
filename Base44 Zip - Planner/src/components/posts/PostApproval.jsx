@@ -139,31 +139,55 @@ export default function PostApproval({ post, onUpdate }) {
   };
 
   const handleApprove = async () => {
-    if (!user?.id) {
-      toast.error("You must be logged in.");
-      return;
-    }
-    if (!isAwaitingApproval) {
-      toast.error("This post is not awaiting approval.");
-      return;
-    }
+  if (!user?.id) {
+    toast.error("You must be logged in.");
+    return;
+  }
+  if (!isAwaitingApproval) {
+    toast.error("This post is not awaiting approval.");
+    return;
+  }
 
-    await updateMutation
-      .mutateAsync({
-        status: "ready_to_post",
-        approval_status: "approved",
-        approved_by: user.id,
-        approved_at: new Date().toISOString(),
-      })
-      .catch(() => {});
+  await updateMutation
+    .mutateAsync({
+      decision: "approve",
+      comment: null,
+    })
+    .catch(() => {});
 
-    await safeInsertAuditLog("approved", {
-      action: "Client approved post",
-      approved_by: user.full_name ?? user.email ?? user.id,
-    });
+  await safeInsertAuditLog("approved", {
+    action: "Client approved post",
+    approved_by: user.full_name ?? user.email ?? user.id,
+  });
 
-    toast.success("Approved! Post is now Ready to Post.");
-  };
+  toast.success("Approved! Post is now Ready to Post.");
+};
+
+const handleRequestChanges = async () => {
+  if (!user?.id) {
+    toast.error("You must be logged in.");
+    return;
+  }
+  if (!isAwaitingApproval) {
+    toast.error("This post is not awaiting approval.");
+    return;
+  }
+
+  await updateMutation
+    .mutateAsync({
+      decision: "request_changes",
+      comment: rejectReason?.trim() || null,
+    })
+    .catch(() => {});
+
+  await safeInsertAuditLog("changes_requested", {
+    action: "Client requested changes",
+    requested_by: user.full_name ?? user.email ?? user.id,
+    comment: rejectReason?.trim() || null,
+  });
+
+  toast.success("Changes requested. The team has been notified.");
+};
 
   const handleRequestChanges = async () => {
     if (!user?.id) {
