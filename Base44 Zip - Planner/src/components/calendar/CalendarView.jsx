@@ -138,14 +138,13 @@ export default function CalendarView({
                         onPostClick?.(post);
                       }}
                       className={cn(
-                        "flex items-center gap-1.5 px-2 py-1 rounded-md text-xs cursor-pointer transition-all hover:shadow-sm",
-                        post.status === 'draft' && "bg-slate-100 hover:bg-slate-200",
-                        post.status === 'internal_review' && "bg-amber-100 hover:bg-amber-200",
-                        post.status === 'sent_to_client' && "bg-blue-100 hover:bg-blue-200",
-                        post.status === 'approved' && "bg-emerald-100 hover:bg-emerald-200",
-                        post.status === 'ready_to_post' && "bg-purple-100 hover:bg-purple-200",
-                        post.status === 'posted' && "bg-green-100 hover:bg-green-200 opacity-60"
-                      )}
+  "flex items-center gap-1.5 px-2 py-1 rounded-md text-xs cursor-pointer transition-all hover:shadow-sm",
+  post.status === "draft" && "bg-slate-100 hover:bg-slate-200",
+  post.status === "wait_for_approval" && "bg-blue-100 hover:bg-blue-200",
+  post.status === "changes_requested" && "bg-amber-100 hover:bg-amber-200",
+  post.status === "ready_to_post" && "bg-purple-100 hover:bg-purple-200",
+  post.status === "completed" && "bg-green-100 hover:bg-green-200 opacity-60"
+)}
                     >
                       <PlatformIcon platform={post.platform} size="sm" />
                       <span className="truncate font-medium text-slate-700">
