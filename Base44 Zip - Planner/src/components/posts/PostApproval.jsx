@@ -70,22 +70,27 @@ export default function PostApproval({ post, onUpdate }) {
   };
 
   const updateMutation = useMutation({
-    mutationFn: async (data) => {
-      const { error } = await supabase.from("posts").update(data).eq("id", post.id);
-      if (error) throw error;
-      return true;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["posts"] });
-      queryClient.invalidateQueries({ queryKey: ["post", post.id] });
-      toast.success("Post updated");
-      onUpdate?.();
-    },
-    onError: (e) => {
-      console.error(e);
-      toast.error("Failed to update post");
-    },
-  });
+  mutationFn: async ({ decision, comment }) => {
+    const { data, error } = await supabase.rpc("rpc_client_decide_post", {
+      p_post_id: post.id,
+      p_decision: decision, // 'approve' | 'request_changes'
+      p_comment: comment ?? null,
+    });
+
+    if (error) throw error;
+    return data;
+  },
+  onSuccess: () => {
+    queryClient.invalidateQueries({ queryKey: ["posts"] });
+    queryClient.invalidateQueries({ queryKey: ["post", post.id] });
+    toast.success("Post updated");
+    onUpdate?.();
+  },
+  onError: (e) => {
+    console.error(e);
+    toast.error(e?.message || "Failed to update post");
+  },
+});
 
   // Best-effort comment insert that works even if your comments schema differs.
   const safeCreateComment = async (content) => {
