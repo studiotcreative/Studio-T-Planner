@@ -376,7 +376,6 @@ export default function Team() {
                 disabled={busy("invite") || !inviteWorkspaceId}
                 title={!inviteWorkspaceId ? "Select a workspace first" : "Workspace role"}
               >
-                <option value="viewer">viewer</option>
                 <option value="client_viewer">client_viewer</option>
                 <option value="client_approver">client_approver</option>
                 <option value="account_manager">account_manager</option>
