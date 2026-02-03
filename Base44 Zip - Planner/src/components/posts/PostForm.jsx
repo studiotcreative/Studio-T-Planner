@@ -452,12 +452,20 @@ export default function PostForm({
         {!isClient() && (
           <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-slate-200 rounded-xl hover:border-slate-300 hover:bg-slate-50 transition-colors cursor-pointer mb-4">
             <input
-              type="file"
-              multiple
-              accept="image/*,video/*"
-              onChange={handleFileUpload}
-              className="hidden"
-            />
+  type="file"
+  multiple
+  accept="image/*,video/*"
+  className="hidden"
+  onClick={(e) => {
+    // Allows selecting the same file twice and still triggers onChange
+    e.currentTarget.value = null;
+    console.log("[UPLOAD] input clicked");
+  }}
+  onChange={(e) => {
+    console.log("[UPLOAD] onChange fired. files:", e.target.files);
+    handleFileUpload(e);
+  }}
+/>
             {uploading ? (
               <Loader2 className="w-8 h-8 text-slate-400 animate-spin" />
             ) : (
