@@ -62,7 +62,7 @@ export default function PostApproval({ post, onUpdate }) {
         entity_type: "post",
         entity_id: post.id,
         action,
-        actor_user_id: user?.id ?? null,
+        actor_id: user?.id ?? null,
         actor_email: user?.email ?? null,
         actor_name: user?.full_name ?? null,
         details: JSON.stringify(details ?? {}),
