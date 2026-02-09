@@ -127,35 +127,6 @@ function LayoutContent({ children, currentPageName }) {
 
   return (
     <div className="min-h-screen bg-slate-50">
-      {/* DEBUG BOX (temporary) */}
-      <div
-        style={{
-          position: "fixed",
-          bottom: 10,
-          left: 10,
-          background: "white",
-          padding: 8,
-          border: "1px solid #ddd",
-          zIndex: 9999,
-          fontSize: 12,
-          display: "flex",
-          gap: 8,
-          alignItems: "center",
-          flexWrap: "wrap",
-        }}
-      >
-        <span>
-          role: {String(userRole)} | isAdmin(): {String(isAdmin())} | email: {String(user?.email)} |
-          workspaces: {String(workspaces?.length ?? 0)}
-        </span>
-
-        <button
-          onClick={copyAccessToken}
-          style={{ border: "1px solid #ddd", padding: "2px 6px", borderRadius: 4 }}
-        >
-          Copy Token
-        </button>
-      </div>
 
       {/* Header */}
       <header className="sticky top-0 z-50 bg-white/80 backdrop-blur-xl border-b border-slate-200/60">
