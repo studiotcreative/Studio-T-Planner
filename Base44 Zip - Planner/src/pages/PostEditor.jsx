@@ -37,8 +37,7 @@ export default function PostEditor() {
   const auth = useAuth();
   const queryClient = useQueryClient();
 
-  // Some versions of AuthProvider expose isClient as a function,
-  // others as a boolean. Normalize safely.
+  // Normalize isClient (some versions are boolean vs function)
   const isClientFn = useMemo(() => {
     if (typeof auth?.isClient === "function") return auth.isClient;
     return () => !!auth?.isClient;
@@ -50,6 +49,9 @@ export default function PostEditor() {
   const postId = urlParams.get("id");
   const initialDate = urlParams.get("date");
 
+  // ----------------------------
+  // Load post (edit mode)
+  // ----------------------------
   const { data: post, isLoading: loadingPost } = useQuery({
     queryKey: ["post", postId],
     enabled: !!postId,
@@ -65,8 +67,14 @@ export default function PostEditor() {
     },
   });
 
+  // ----------------------------
+  // Accounts + Workspaces (used for header display + validation)
+  // NOTE: This does NOT change UI dropdowns inside PostForm yet.
+  // We'll fix the actual dropdown in PostForm next.
+  // ----------------------------
   const { data: accounts = [] } = useQuery({
     queryKey: ["accounts"],
+    enabled: !auth?.loading,
     queryFn: async () => {
       const { data, error } = await supabase.from("social_accounts").select("*");
       if (error) throw error;
@@ -76,6 +84,7 @@ export default function PostEditor() {
 
   const { data: workspaces = [] } = useQuery({
     queryKey: ["workspaces"],
+    enabled: !auth?.loading,
     queryFn: async () => {
       const { data, error } = await supabase.from("workspaces").select("*");
       if (error) throw error;
@@ -83,11 +92,14 @@ export default function PostEditor() {
     },
   });
 
+  // ----------------------------
+  // Mutations
+  // ----------------------------
   const createMutation = useMutation({
-    mutationFn: async (data) => {
+    mutationFn: async (payload) => {
       const { data: created, error } = await supabase
         .from("posts")
-        .insert(data)
+        .insert(payload)
         .select("*")
         .single();
 
@@ -101,13 +113,13 @@ export default function PostEditor() {
     },
     onError: (e) => {
       console.error(e);
-      toast.error("Failed to create post");
+      toast.error(e?.message || "Failed to create post");
     },
   });
 
   const updateMutation = useMutation({
-    mutationFn: async (data) => {
-      const { error } = await supabase.from("posts").update(data).eq("id", postId);
+    mutationFn: async (payload) => {
+      const { error } = await supabase.from("posts").update(payload).eq("id", postId);
       if (error) throw error;
       return true;
     },
@@ -118,7 +130,7 @@ export default function PostEditor() {
     },
     onError: (e) => {
       console.error(e);
-      toast.error("Failed to update post");
+      toast.error(e?.message || "Failed to update post");
     },
   });
 
@@ -135,47 +147,78 @@ export default function PostEditor() {
     },
     onError: (e) => {
       console.error(e);
-      toast.error("Failed to delete post");
+      toast.error(e?.message || "Failed to delete post");
     },
   });
 
-  // ✅ Team Status mutation (the missing “team flow”)
+  // ✅ Team status mutation (DB-enforced)
   const statusMutation = useMutation({
-  mutationFn: async (nextStatus) => {
-    if (!postId) throw new Error("Missing post id");
+    mutationFn: async (nextStatus) => {
+      if (!postId) throw new Error("Missing post id");
 
-    const { data, error } = await supabase.rpc("rpc_set_post_status", {
-      p_post_id: postId,
-      p_next_status: nextStatus,
-    });
+      const { data, error } = await supabase.rpc("rpc_set_post_status", {
+        p_post_id: postId,
+        p_next_status: nextStatus,
+      });
 
-    if (error) throw error;
-    return data;
-  },
-  onSuccess: () => {
-    queryClient.invalidateQueries({ queryKey: ["posts"] });
-    queryClient.invalidateQueries({ queryKey: ["post", postId] });
-    toast.success("Status updated");
-  },
-  onError: (e) => {
-    console.error(e);
-    toast.error(e?.message || "Failed to update status");
-  },
-});
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["posts"] });
+      queryClient.invalidateQueries({ queryKey: ["post", postId] });
+      toast.success("Status updated");
+    },
+    onError: (e) => {
+      console.error(e);
+      toast.error(e?.message || "Failed to update status");
+    },
+  });
 
+  // ----------------------------
+  // Save / Delete handlers
+  // ----------------------------
   const handleSave = (formData) => {
     if (!user?.id) {
       toast.error("You must be logged in to save.");
       return;
     }
 
+    // ✅ SAFETY FIX:
+    // If a social account is selected, force workspace_id to match that account.
+    // And block save if mismatch.
+    const selectedAccountId = formData?.social_account_id || null;
+    const selectedWorkspaceId = formData?.workspace_id || null;
+
+    if (!selectedAccountId) {
+      toast.error("Please select a social account.");
+      return;
+    }
+
+    const acct = accounts.find((a) => a.id === selectedAccountId);
+    if (!acct) {
+      toast.error("Selected social account not found.");
+      return;
+    }
+
+    // If the form has a workspace selected and it doesn't match the account, block save.
+    if (selectedWorkspaceId && acct.workspace_id && selectedWorkspaceId !== acct.workspace_id) {
+      toast.error("Workspace and social account do not match. Please re-select.");
+      return;
+    }
+
+    // Force correct workspace_id from the selected account (source of truth)
+    const payload = {
+      ...formData,
+      workspace_id: acct.workspace_id,
+    };
+
     if (postId) {
-      updateMutation.mutate(formData);
+      updateMutation.mutate(payload);
     } else {
-      // Default new post status to draft unless form sets it
       createMutation.mutate({
         status: "draft",
-        ...formData,
+        ...payload,
         created_by: user.id,
       });
     }
@@ -197,7 +240,6 @@ export default function PostEditor() {
     }
   };
 
-  // ✅ Replace “posted” with your new final step: completed
   const handleMarkCompleted = async () => {
     if (!user?.id) {
       toast.error("You must be logged in.");
@@ -224,13 +266,7 @@ export default function PostEditor() {
 
   const copyAll = async () => {
     if (!post) return;
-    const text = [
-      post.caption,
-      "",
-      post.hashtags,
-      "",
-      post.first_comment ? `First Comment: ${post.first_comment}` : "",
-    ]
+    const text = [post.caption, "", post.hashtags, "", post.first_comment ? `First Comment: ${post.first_comment}` : ""]
       .filter(Boolean)
       .join("\n");
 
@@ -253,8 +289,9 @@ export default function PostEditor() {
     toast.success("Downloading assets...");
   };
 
-  const account = accounts.find((a) => a.id === post?.social_account_id);
-  const workspace = workspaces.find((w) => w.id === post?.workspace_id);
+  // Header context (edit mode)
+  const headerAccount = accounts.find((a) => a.id === post?.social_account_id);
+  const headerWorkspace = workspaces.find((w) => w.id === post?.workspace_id);
 
   if (loadingPost && postId) {
     return (
@@ -273,16 +310,17 @@ export default function PostEditor() {
           <Button variant="ghost" size="icon" onClick={() => navigate(-1)}>
             <ArrowLeft className="w-5 h-5" />
           </Button>
+
           <div>
             <h1 className="text-2xl font-bold text-slate-900">
               {postId ? "Edit Post" : "New Post"}
             </h1>
 
-            {post && account && (
+            {post && headerAccount && (
               <div className="flex items-center gap-2 mt-1">
                 <PlatformIcon platform={post.platform} size="sm" />
-                <span className="text-slate-500">@{account.handle}</span>
-                {workspace && <span className="text-slate-400">• {workspace.name}</span>}
+                <span className="text-slate-500">@{headerAccount.handle}</span>
+                {headerWorkspace && <span className="text-slate-400">• {headerWorkspace.name}</span>}
               </div>
             )}
           </div>
@@ -290,10 +328,9 @@ export default function PostEditor() {
 
         {post && (
           <div className="flex items-center gap-3">
-            {/* Badge always visible */}
             <StatusBadge status={post.status} />
 
-            {/* ✅ Team status control (client is read-only) */}
+            {/* Team status control (clients read-only) */}
             {!isClientFn() && (
               <Select
                 value={post.status ?? "draft"}
@@ -313,7 +350,7 @@ export default function PostEditor() {
               </Select>
             )}
 
-            {/* Posting Mode Actions: only when READY_TO_POST for team */}
+            {/* Actions only when READY_TO_POST */}
             {!isClientFn() && post.status === "ready_to_post" && (
               <>
                 <Button variant="outline" onClick={copyAll}>
@@ -349,9 +386,6 @@ export default function PostEditor() {
       <div className="grid lg:grid-cols-3 gap-6">
         {/* Main Form */}
         <div className="lg:col-span-2 space-y-6">
-          {/* Approval Section (existing component)
-              NOTE: This component may still use old statuses internally.
-              It will not break, but we should align it next. */}
           {post && <PostApproval post={post} />}
 
           <PostForm
@@ -365,7 +399,6 @@ export default function PostEditor() {
 
         {/* Sidebar */}
         <div className="space-y-6">
-          {/* Preview */}
           {post?.asset_urls?.[0] && (
             <div className="bg-white rounded-xl border border-slate-200/60 p-6">
               <h3 className="text-sm font-medium text-slate-700 mb-4">Preview</h3>
@@ -379,7 +412,6 @@ export default function PostEditor() {
             </div>
           )}
 
-          {/* Comments */}
           {postId && <PostComments postId={postId} workspaceId={post?.workspace_id} />}
         </div>
       </div>
