@@ -29,12 +29,17 @@ import { useAuth } from "@/components/auth/AuthProvider";
 import { Skeleton } from "@/components/ui/skeleton";
 
 function LayoutContent({ children, currentPageName }) {
-  const { user, userRole, loading, isAdmin, isClient, signOut, copyAccessToken } = useAuth();
-  const [mobileOpen, setMobileOpen] = useState(false);
+  const { user, userRole, loading, isAdmin, isAccountManager, isClient, signOut } = useAuth();
 
-  // Workspaces fetch (enabled for any logged-in user, to verify data access)
-  const { data: workspaces = [] } = useQuery({
-    queryKey: ["workspaces"],
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [activeWorkspaceId, setActiveWorkspaceId] = useState(
+    () => localStorage.getItem("active_workspace_id") || "all"
+  );
+
+  // Workspaces fetch (enabled for any logged-in user)
+  const { data: workspaces = [], error: workspacesErr } = useQuery({
+    queryKey: ["workspaces", user?.id ?? "anon"],
+    enabled: !loading && Boolean(user),
     queryFn: async () => {
       const { data, error } = await supabase
         .from("workspaces")
@@ -44,7 +49,6 @@ function LayoutContent({ children, currentPageName }) {
       if (error) throw error;
       return data ?? [];
     },
-    enabled: !loading && Boolean(user),
   });
 
   const handleSignOut = async () => {
@@ -85,6 +89,7 @@ function LayoutContent({ children, currentPageName }) {
         { label: "Feed Preview", icon: LayoutGrid, href: createPageUrl("ClientFeed") }
       );
     } else {
+      // account_manager (and any non-client non-admin internal user)
       items.push(
         { label: "Dashboard", icon: LayoutGrid, href: createPageUrl("Dashboard") },
         { label: "Calendar", icon: Calendar, href: createPageUrl("Calendar") }
@@ -127,11 +132,11 @@ function LayoutContent({ children, currentPageName }) {
 
   return (
     <div className="min-h-screen bg-slate-50">
-
       {/* Header */}
       <header className="sticky top-0 z-50 bg-white/80 backdrop-blur-xl border-b border-slate-200/60">
         <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
+            {/* Left */}
             <div className="flex items-center gap-8">
               <Link
                 to={createPageUrl(isClient() ? "ClientCalendar" : "Dashboard")}
@@ -150,13 +155,38 @@ function LayoutContent({ children, currentPageName }) {
               </div>
             </div>
 
+            {/* Right (ONE container) */}
             <div className="flex items-center gap-3">
+              {/* Workspace switcher */}
+              {(isAdmin() || isAccountManager()) && !isClient() && (
+                <select
+                  className="hidden md:block h-9 border border-slate-200 rounded-md px-2 text-sm bg-white"
+                  value={activeWorkspaceId}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setActiveWorkspaceId(v);
+                    localStorage.setItem("active_workspace_id", v);
+                    window.dispatchEvent(new Event("active-workspace-changed"));
+                  }}
+                  title="Workspace"
+                >
+                  <option value="all">All Workspaces</option>
+                  {(workspaces ?? []).map((w) => (
+                    <option key={w.id} value={w.id}>
+                      {w.name}
+                    </option>
+                  ))}
+                </select>
+              )}
+
+              {/* Role pill */}
               <div className="hidden md:flex items-center gap-2 px-3 py-1.5 bg-slate-100 rounded-full">
                 <span className="text-xs font-medium text-slate-600 capitalize">
                   {String(userRole || "").replace("_", " ") || "unknown"}
                 </span>
               </div>
 
+              {/* User menu */}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="ghost" className="flex items-center gap-2 px-2">
@@ -188,6 +218,7 @@ function LayoutContent({ children, currentPageName }) {
                 </DropdownMenuContent>
               </DropdownMenu>
 
+              {/* Mobile menu */}
               <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
                 <SheetTrigger asChild>
                   <Button variant="ghost" size="icon" className="lg:hidden">
@@ -202,6 +233,13 @@ function LayoutContent({ children, currentPageName }) {
               </Sheet>
             </div>
           </div>
+
+          {/* Optional: tiny warning if workspaces fail (helps debug AM issues) */}
+          {workspacesErr && !isClient() && (
+            <div className="pb-3 text-xs text-amber-700">
+              Workspaces failed to load.
+            </div>
+          )}
         </div>
       </header>
 
@@ -211,7 +249,6 @@ function LayoutContent({ children, currentPageName }) {
 }
 
 export default function Layout({ children, currentPageName }) {
-  // ✅ IMPORTANT: do NOT wrap AuthProvider here (App.jsx already wraps it)
   return <LayoutContent currentPageName={currentPageName}>{children}</LayoutContent>;
 }
 
