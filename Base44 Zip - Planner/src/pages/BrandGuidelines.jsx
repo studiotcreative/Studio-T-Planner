@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useMemo } from "react";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { supabase } from "@/api/supabaseClient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -11,7 +11,7 @@ import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 
 export default function BrandGuidelines() {
-  const { loading } = useAuth(); // you can keep user/isAdmin/workspaceMemberships if you want later
+  const { loading } = useAuth();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
@@ -33,33 +33,56 @@ export default function BrandGuidelines() {
     },
   });
 
-  const { data: guidelines, isLoading: loadingGuidelines } = useQuery({
+  // NOTE: brand_guidelines table stores most fields inside `data` jsonb
+  const { data: guidelinesRow, isLoading: loadingGuidelines } = useQuery({
     queryKey: ["brandGuidelines", workspaceId],
     enabled: !!workspaceId && !loading,
     queryFn: async () => {
       const { data, error } = await supabase
         .from("brand_guidelines")
-        .select("*")
+        .select("id, workspace_id, data, additional_notes, created_at, updated_at")
         .eq("workspace_id", workspaceId)
         .maybeSingle(); // returns null if no row
 
-      // if table has 0 rows for this workspace, maybeSingle() is clean
       if (error) throw error;
       return data ?? null;
     },
   });
 
+  // Flatten DB row -> form-friendly object (what BrandGuidelinesForm expects)
+  const guidelines = useMemo(() => {
+    if (!guidelinesRow) return null;
+    const saved = guidelinesRow.data ?? {};
+    return {
+      ...saved,
+      additional_notes: guidelinesRow.additional_notes ?? "",
+      // keep id if your form relies on it (harmless)
+      id: guidelinesRow.id,
+      workspace_id: guidelinesRow.workspace_id,
+    };
+  }, [guidelinesRow]);
+
   const saveMutation = useMutation({
     mutationFn: async (formData) => {
-      const payload = { ...formData, workspace_id: workspaceId };
+      // Separate additional_notes (real column) from everything else (goes into jsonb)
+      const { additional_notes, id: _ignoreId, workspace_id: _ignoreWs, ...rest } = formData || {};
 
-      // If guidelines exists, update. Otherwise insert.
-      if (guidelines?.id) {
+      const payload = {
+        workspace_id: workspaceId,
+        additional_notes: additional_notes ?? "",
+        data: {
+          ...rest,
+        },
+        updated_at: new Date().toISOString(),
+      };
+
+      // Update if row exists; otherwise insert
+      if (guidelinesRow?.id) {
         const { data, error } = await supabase
           .from("brand_guidelines")
           .update(payload)
-          .eq("id", guidelines.id)
-          .select()
+          .eq("id", guidelinesRow.id)
+          .select("id, workspace_id, data, additional_notes, created_at, updated_at")
           .single();
 
         if (error) throw error;
@@ -68,7 +91,7 @@ export default function BrandGuidelines() {
         const { data, error } = await supabase
           .from("brand_guidelines")
           .insert(payload)
-          .select()
+          .select("id, workspace_id, data, additional_notes, created_at, updated_at")
           .single();
 
         if (error) throw error;
@@ -81,7 +104,7 @@ export default function BrandGuidelines() {
     },
     onError: (err) => {
       console.error("[BrandGuidelines] save error:", err);
-      toast.error("Failed to save brand guidelines");
+      toast.error(err?.message || "Failed to save brand guidelines");
     },
   });
 
@@ -90,10 +113,7 @@ export default function BrandGuidelines() {
       <div className="min-h-screen bg-gray-50 p-8 flex items-center justify-center">
         <div className="text-center">
           <p className="text-gray-600">No workspace selected</p>
-          <Button
-            onClick={() => navigate(createPageUrl("Workspaces"))}
-            className="mt-4"
-          >
+          <Button onClick={() => navigate(createPageUrl("Workspaces"))} className="mt-4">
             Go to Workspaces
           </Button>
         </div>
@@ -118,22 +138,19 @@ export default function BrandGuidelines() {
         <div className="mb-6">
           <Button
             variant="ghost"
-            onClick={() =>
-              navigate(createPageUrl(`WorkspaceDetails?id=${workspaceId}`))
-            }
+            onClick={() => navigate(createPageUrl(`WorkspaceDetails?id=${workspaceId}`))}
             className="mb-4"
           >
             <ArrowLeft className="w-4 h-4 mr-2" />
             Back to Workspace
           </Button>
+
           <div className="flex items-center gap-3">
             <div className="bg-gradient-to-br from-purple-500 to-pink-500 p-3 rounded-xl">
               <Book className="w-6 h-6 text-white" />
             </div>
             <div>
-              <h1 className="text-3xl font-bold text-gray-900">
-                Brand Guidelines
-              </h1>
+              <h1 className="text-3xl font-bold text-gray-900">Brand Guidelines</h1>
               <p className="text-gray-600">{workspace?.name}</p>
             </div>
           </div>
@@ -148,3 +165,4 @@ export default function BrandGuidelines() {
     </div>
   );
 }
+
