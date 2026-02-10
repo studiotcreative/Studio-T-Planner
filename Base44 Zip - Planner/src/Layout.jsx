@@ -29,7 +29,7 @@ import { useAuth } from "@/components/auth/AuthProvider";
 import { Skeleton } from "@/components/ui/skeleton";
 
 function LayoutContent({ children, currentPageName }) {
-  const { user, userRole, loading, isAdmin, isAccountManager, isClient, signOut } = useAuth();
+  const { user, userRole, workspaceMemberships, loading, isAdmin, isAccountManager, isClient, signOut } = useAuth();
 
   const [mobileOpen, setMobileOpen] = useState(false);
   const [activeWorkspaceId, setActiveWorkspaceId] = useState(
@@ -89,12 +89,14 @@ function LayoutContent({ children, currentPageName }) {
         { label: "Feed Preview", icon: LayoutGrid, href: createPageUrl("ClientFeed") }
       );
     } else {
-      // account_manager (and any non-client non-admin internal user)
-      items.push(
-        { label: "Dashboard", icon: LayoutGrid, href: createPageUrl("Dashboard") },
-        { label: "Calendar", icon: Calendar, href: createPageUrl("Calendar") }
-      );
-    }
+  // account_manager (and any non-client non-admin internal user)
+  items.push(
+    { label: "Dashboard", icon: LayoutGrid, href: createPageUrl("Dashboard") },
+    { label: "Calendar", icon: Calendar, href: createPageUrl("Calendar") },
+    { label: "Workspaces", icon: Building2, href: createPageUrl("Workspaces") }
+    // NOTE: intentionally NOT showing Team (global user management)
+  );
+}
 
     return items;
   };
