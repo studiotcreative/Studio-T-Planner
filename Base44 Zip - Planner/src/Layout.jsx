@@ -2,8 +2,6 @@
 import React, { useState } from "react";
 import { Link } from "react-router-dom";
 import { createPageUrl } from "./utils";
-import { supabase } from "@/api/supabaseClient";
-import { useQuery } from "@tanstack/react-query";
 import {
   Calendar,
   LayoutGrid,
@@ -32,24 +30,6 @@ function LayoutContent({ children, currentPageName }) {
   const { user, userRole, workspaceMemberships, loading, isAdmin, isAccountManager, isClient, signOut } = useAuth();
 
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [activeWorkspaceId, setActiveWorkspaceId] = useState(
-    () => localStorage.getItem("active_workspace_id") || "all"
-  );
-
-  // Workspaces fetch (enabled for any logged-in user)
-  const { data: workspaces = [], error: workspacesErr } = useQuery({
-    queryKey: ["workspaces", user?.id ?? "anon"],
-    enabled: !loading && Boolean(user),
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("workspaces")
-        .select("*")
-        .order("created_at", { ascending: false });
-
-      if (error) throw error;
-      return data ?? [];
-    },
-  });
 
   const handleSignOut = async () => {
     try {
@@ -159,27 +139,6 @@ function LayoutContent({ children, currentPageName }) {
 
             {/* Right (ONE container) */}
             <div className="flex items-center gap-3">
-              {/* Workspace switcher */}
-              {(isAdmin() || isAccountManager()) && !isClient() && (
-                <select
-                  className="hidden md:block h-9 border border-slate-200 rounded-md px-2 text-sm bg-white"
-                  value={activeWorkspaceId}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    setActiveWorkspaceId(v);
-                    localStorage.setItem("active_workspace_id", v);
-                    window.dispatchEvent(new Event("active-workspace-changed"));
-                  }}
-                  title="Workspace"
-                >
-                  <option value="all">All Workspaces</option>
-                  {(workspaces ?? []).map((w) => (
-                    <option key={w.id} value={w.id}>
-                      {w.name}
-                    </option>
-                  ))}
-                </select>
-              )}
 
               {/* Role pill */}
               <div className="hidden md:flex items-center gap-2 px-3 py-1.5 bg-slate-100 rounded-full">
@@ -237,11 +196,6 @@ function LayoutContent({ children, currentPageName }) {
           </div>
 
           {/* Optional: tiny warning if workspaces fail (helps debug AM issues) */}
-          {workspacesErr && !isClient() && (
-            <div className="pb-3 text-xs text-amber-700">
-              Workspaces failed to load.
-            </div>
-          )}
         </div>
       </header>
 
