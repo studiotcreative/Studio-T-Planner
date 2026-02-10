@@ -56,10 +56,13 @@ export default function Workspaces() {
   const [editingWorkspace, setEditingWorkspace] = useState(null);
   const [formData, setFormData] = useState({ name: "", slug: "", notes: "" });
 
+  const canViewWorkspaces = isAdmin() || isAccountManager();
+  const canAdminWorkspaces = isAdmin();
+
   // ---- Queries ----
   const { data: workspaces = [], isLoading: loadingWorkspaces } = useQuery({
     queryKey: ["workspaces"],
-    enabled: !loading && (isAdmin() || isAccountManager()),
+    enabled: !loading && canViewWorkspaces,
     queryFn: async () => {
       const { data, error } = await supabase
         .from("workspaces")
@@ -73,7 +76,7 @@ export default function Workspaces() {
 
   const { data: accounts = [] } = useQuery({
     queryKey: ["accounts"],
-    enabled: !loading && (isAdmin() || isAccountManager()),
+    enabled: !loading && canViewWorkspaces,
     queryFn: async () => {
       const { data, error } = await supabase.from("social_accounts").select("*");
       if (error) throw error;
@@ -83,7 +86,7 @@ export default function Workspaces() {
 
   const { data: members = [] } = useQuery({
     queryKey: ["members"],
-    enabled: !loading && (isAdmin() || isAccountManager()),
+    enabled: !loading && canViewWorkspaces,
     queryFn: async () => {
       const { data, error } = await supabase.from("workspace_members").select("*");
       if (error) throw error;
@@ -91,7 +94,7 @@ export default function Workspaces() {
     },
   });
 
-  // ---- Mutations ----
+  // ---- Mutations (admin-only actions in UI) ----
   const createMutation = useMutation({
     mutationFn: async (payload) => {
       const { data: userRes, error: userErr } = await supabase.auth.getUser();
@@ -99,7 +102,6 @@ export default function Workspaces() {
       const userId = userRes?.user?.id ?? null;
       if (!userId) throw new Error("No authenticated user");
 
-      // 1) Create workspace and return the inserted row (need id)
       const { data: ws, error: wsErr } = await supabase
         .from("workspaces")
         .insert([
@@ -117,8 +119,6 @@ export default function Workspaces() {
       if (wsErr) throw wsErr;
       if (!ws?.id) throw new Error("Workspace created but no id returned");
 
-      // 2) Base44-like behavior: creator is also a workspace member
-      //    (admin-only policy allows this, and it makes membership consistent)
       const { error: wmErr } = await supabase
         .from("workspace_members")
         .upsert(
@@ -245,7 +245,9 @@ export default function Workspaces() {
   };
 
   const handleDelete = (workspace) => {
-    if (confirm(`Are you sure you want to delete "${workspace.name}"? This cannot be undone.`)) {
+    if (
+      confirm(`Are you sure you want to delete "${workspace.name}"? This cannot be undone.`)
+    ) {
       deleteMutation.mutate(workspace.id);
     }
   };
@@ -277,7 +279,7 @@ export default function Workspaces() {
     );
   }
 
-  if (!(isAdmin() || isAccountManager())) {
+  if (!canViewWorkspaces) {
     return (
       <div className="max-w-[1200px] mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <p className="text-center text-slate-500">You don't have access to this page.</p>
@@ -294,17 +296,19 @@ export default function Workspaces() {
           <h1 className="text-2xl font-bold text-slate-900">Workspaces</h1>
           <p className="text-slate-500 mt-1">Manage client workspaces and social accounts</p>
         </div>
-      {isAdmin() && (
-        <Button
-          className="bg-slate-900 hover:bg-slate-800"
-          onClick={() => {
-            resetForm();
-            setShowDialog(true);
-          }}
-        >
-          <Plus className="w-4 h-4 mr-2" />
-          New Workspace
-        </Button>
+
+        {canAdminWorkspaces && (
+          <Button
+            className="bg-slate-900 hover:bg-slate-800"
+            onClick={() => {
+              resetForm();
+              setShowDialog(true);
+            }}
+          >
+            <Plus className="w-4 h-4 mr-2" />
+            New Workspace
+          </Button>
+        )}
       </div>
 
       {/* Search */}
@@ -330,17 +334,20 @@ export default function Workspaces() {
           <CardContent className="py-16 text-center">
             <Building2 className="w-12 h-12 text-slate-300 mx-auto mb-4" />
             <p className="text-slate-500">No workspaces found</p>
-            <Button
-              variant="outline"
-              className="mt-4"
-              onClick={() => {
-                resetForm();
-                setShowDialog(true);
-              }}
-            >
-              <Plus className="w-4 h-4 mr-2" />
-              Create Workspace
-            </Button>
+
+            {canAdminWorkspaces && (
+              <Button
+                variant="outline"
+                className="mt-4"
+                onClick={() => {
+                  resetForm();
+                  setShowDialog(true);
+                }}
+              >
+                <Plus className="w-4 h-4 mr-2" />
+                Create Workspace
+              </Button>
+            )}
           </CardContent>
         </Card>
       ) : (
@@ -373,12 +380,8 @@ export default function Workspaces() {
                         <MoreVertical className="w-4 h-4" />
                       </Button>
                     </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem onClick={() => openEditDialog(workspace)}>
-                        <Pencil className="w-4 h-4 mr-2" />
-                        Edit
-                      </DropdownMenuItem>
 
+                    <DropdownMenuContent align="end">
                       <Link to={createPageUrl(`WorkspaceDetails?id=${workspace.id}`)}>
                         <DropdownMenuItem>
                           <ExternalLink className="w-4 h-4 mr-2" />
@@ -386,12 +389,24 @@ export default function Workspaces() {
                         </DropdownMenuItem>
                       </Link>
 
-                      <DropdownMenuSeparator />
+                      {canAdminWorkspaces && (
+                        <>
+                          <DropdownMenuSeparator />
 
-                      <DropdownMenuItem className="text-red-600" onClick={() => handleDelete(workspace)}>
-                        <Trash2 className="w-4 h-4 mr-2" />
-                        Delete
-                      </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => openEditDialog(workspace)}>
+                            <Pencil className="w-4 h-4 mr-2" />
+                            Edit
+                          </DropdownMenuItem>
+
+                          <DropdownMenuItem
+                            className="text-red-600"
+                            onClick={() => handleDelete(workspace)}
+                          >
+                            <Trash2 className="w-4 h-4 mr-2" />
+                            Delete
+                          </DropdownMenuItem>
+                        </>
+                      )}
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </CardHeader>
@@ -401,13 +416,20 @@ export default function Workspaces() {
                   <div className="flex items-center justify-between mb-4 pb-4 border-b border-slate-200">
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-medium text-slate-700">Status:</span>
-                      <span className={`text-sm ${workspace.is_active ? "text-green-600" : "text-slate-400"}`}>
+                      <span
+                        className={`text-sm ${
+                          workspace.is_active ? "text-green-600" : "text-slate-400"
+                        }`}
+                      >
                         {workspace.is_active ? "Active" : "Archived"}
                       </span>
                     </div>
+
                     <Switch
                       checked={workspace.is_active ?? true}
+                      disabled={!canAdminWorkspaces}
                       onCheckedChange={(checked) => {
+                        if (!canAdminWorkspaces) return;
                         toggleActiveMutation.mutate({ id: workspace.id, is_active: checked });
                       }}
                     />
@@ -454,8 +476,14 @@ export default function Workspaces() {
         </div>
       )}
 
-      {/* Create/Edit Dialog */}
-      <Dialog open={showDialog} onOpenChange={setShowDialog}>
+      {/* Create/Edit Dialog (admin-only access via buttons, but also hard-guard just in case) */}
+      <Dialog
+        open={showDialog}
+        onOpenChange={(open) => {
+          if (!canAdminWorkspaces) return;
+          setShowDialog(open);
+        }}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{editingWorkspace ? "Edit Workspace" : "New Workspace"}</DialogTitle>
@@ -497,10 +525,19 @@ export default function Workspaces() {
             </div>
 
             <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setShowDialog(false)}>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setShowDialog(false)}
+              >
                 Cancel
               </Button>
-              <Button type="submit" disabled={createMutation.isPending || updateMutation.isPending}>
+              <Button
+                type="submit"
+                disabled={
+                  createMutation.isPending || updateMutation.isPending || !canAdminWorkspaces
+                }
+              >
                 {(createMutation.isPending || updateMutation.isPending) && (
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                 )}
@@ -513,3 +550,4 @@ export default function Workspaces() {
     </div>
   );
 }
+
