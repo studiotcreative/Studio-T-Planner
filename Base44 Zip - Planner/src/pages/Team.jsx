@@ -498,27 +498,44 @@ export default function Team() {
                         <option value="admin">admin</option>
                       </select>
 
-                      {/* Add to workspace */}
-                      <select
-                        className="h-9 border rounded-md px-2 text-sm"
-                        defaultValue=""
-                        onChange={(e) => {
-                          const wsId = e.target.value;
-                          if (!wsId) return;
-                          // ✅ FIX: use valid enum role
-                          assignToWorkspace(u.id, wsId, "client_viewer");
-                          e.target.value = "";
-                        }}
-                        disabled={anyBusy || Boolean(workspacesErr) || loadingWorkspaces}
-                        title={workspacesErr ? "Workspaces failed to load" : "Assign to workspace"}
-                      >
-                        <option value="">Add to workspace…</option>
-                        {workspaces.map((w) => (
-                          <option key={w.id} value={w.id}>
-                            {w.name}
-                          </option>
-                        ))}
-                      </select>
+                      {/* Workspace role (per user) */}
+<select
+  className="h-9 border rounded-md px-2 text-sm"
+  value={perUserWorkspaceRole[u.id] ?? "account_manager"}
+  onChange={(e) =>
+    setPerUserWorkspaceRole((prev) => ({ ...prev, [u.id]: e.target.value }))
+  }
+  disabled={anyBusy}
+  title="Workspace role"
+>
+  <option value="account_manager">account_manager</option>
+  <option value="client_viewer">client_viewer</option>
+  <option value="client_approver">client_approver</option>
+</select>
+
+{/* Add to workspace */}
+<select
+  className="h-9 border rounded-md px-2 text-sm"
+  defaultValue=""
+  onChange={(e) => {
+    const wsId = e.target.value;
+    if (!wsId) return;
+
+    const role = perUserWorkspaceRole[u.id] ?? "account_manager";
+    assignToWorkspace(u.id, wsId, role);
+
+    e.target.value = "";
+  }}
+  disabled={anyBusy || Boolean(workspacesErr) || loadingWorkspaces}
+  title={workspacesErr ? "Workspaces failed to load" : "Assign to workspace"}
+>
+  <option value="">Add to workspace…</option>
+  {workspaces.map((w) => (
+    <option key={w.id} value={w.id}>
+      {w.name}
+    </option>
+  ))}
+</select>
 
                       {/* Soft remove */}
                       <Button
