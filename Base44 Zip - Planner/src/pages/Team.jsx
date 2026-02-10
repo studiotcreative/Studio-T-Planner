@@ -216,7 +216,7 @@ export default function Team() {
     setBusyKey(key);
     try {
       const { error } = await supabase.from("workspace_members").upsert(
-        { workspace_id: workspaceId, user_id: targetUserId, role },
+        { workspace_id: workspaceId, user_id: targetUserId, role: "account_manager" },
         { onConflict: "workspace_id,user_id" }
       );
 
