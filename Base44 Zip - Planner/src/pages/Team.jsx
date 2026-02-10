@@ -1,3 +1,4 @@
+console.log("TEAM.jsx ACTIVE — 2026-02-10-ACCOUNT-MANAGER");
 // src/pages/Team.jsx
 import React, { useMemo, useState } from "react";
 import { supabase } from "@/api/supabaseClient";
