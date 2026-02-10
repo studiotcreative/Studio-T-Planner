@@ -48,7 +48,7 @@ const slugify = (s) =>
     .replace(/-+/g, "-");
 
 export default function Workspaces() {
-  const { isAdmin, loading } = useAuth();
+  const { isAdmin, isAccountManager, loading } = useAuth();
   const queryClient = useQueryClient();
 
   const [search, setSearch] = useState("");
@@ -59,7 +59,7 @@ export default function Workspaces() {
   // ---- Queries ----
   const { data: workspaces = [], isLoading: loadingWorkspaces } = useQuery({
     queryKey: ["workspaces"],
-    enabled: !loading && isAdmin(),
+    enabled: !loading && (isAdmin() || isAccountManager()),
     queryFn: async () => {
       const { data, error } = await supabase
         .from("workspaces")
@@ -73,7 +73,7 @@ export default function Workspaces() {
 
   const { data: accounts = [] } = useQuery({
     queryKey: ["accounts"],
-    enabled: !loading && isAdmin(),
+    enabled: !loading && (isAdmin() || isAccountManager()),
     queryFn: async () => {
       const { data, error } = await supabase.from("social_accounts").select("*");
       if (error) throw error;
@@ -83,7 +83,7 @@ export default function Workspaces() {
 
   const { data: members = [] } = useQuery({
     queryKey: ["members"],
-    enabled: !loading && isAdmin(),
+    enabled: !loading && (isAdmin() || isAccountManager()),
     queryFn: async () => {
       const { data, error } = await supabase.from("workspace_members").select("*");
       if (error) throw error;
@@ -277,7 +277,7 @@ export default function Workspaces() {
     );
   }
 
-  if (!isAdmin()) {
+  if (!(isAdmin() || isAccountManager())) {
     return (
       <div className="max-w-[1200px] mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <p className="text-center text-slate-500">You don't have access to this page.</p>
@@ -294,6 +294,7 @@ export default function Workspaces() {
           <h1 className="text-2xl font-bold text-slate-900">Workspaces</h1>
           <p className="text-slate-500 mt-1">Manage client workspaces and social accounts</p>
         </div>
+      {isAdmin() && (
         <Button
           className="bg-slate-900 hover:bg-slate-800"
           onClick={() => {
