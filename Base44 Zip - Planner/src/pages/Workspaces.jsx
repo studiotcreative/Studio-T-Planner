@@ -59,36 +59,85 @@ export default function Workspaces() {
   const canViewWorkspaces = isAdmin() || isAccountManager();
   const canAdminWorkspaces = isAdmin();
 
-  // ---- Queries ----
-  const { data: workspaces = [], isLoading: loadingWorkspaces } = useQuery({
-    queryKey: ["workspaces"],
-    enabled: !loading && canViewWorkspaces,
+  // 1) Get authed user id (needed for account_manager scoping)
+  const { data: authUserRes, isLoading: loadingAuthUser } = useQuery({
+    queryKey: ["auth-user"],
+    enabled: !loading,
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("workspaces")
-        .select("*")
-        .order("created_at", { ascending: false });
-
+      const { data, error } = await supabase.auth.getUser();
       if (error) throw error;
-      return data ?? [];
+      return data;
     },
   });
 
-  const { data: accounts = [] } = useQuery({
-    queryKey: ["accounts"],
-    enabled: !loading && canViewWorkspaces,
+  const authedUserId = authUserRes?.user?.id ?? null;
+
+  // 2) Workspaces query:
+  //    - Admin: all workspaces
+  //    - Account Manager: only workspaces where workspace_members.role = 'account_manager'
+  const { data: workspaces = [], isLoading: loadingWorkspaces } = useQuery({
+    queryKey: ["workspaces", authedUserId, canAdminWorkspaces],
+    enabled: !loading && !loadingAuthUser && !!authedUserId && canViewWorkspaces,
     queryFn: async () => {
-      const { data, error } = await supabase.from("social_accounts").select("*");
+      if (canAdminWorkspaces) {
+        const { data, error } = await supabase
+          .from("workspaces")
+          .select("*")
+          .order("created_at", { ascending: false });
+
+        if (error) throw error;
+        return data ?? [];
+      }
+
+      // account_manager: get assigned workspace ids
+      const { data: memberships, error: memErr } = await supabase
+        .from("workspace_members")
+        .select("workspace_id")
+        .eq("user_id", authedUserId)
+        .eq("role", "account_manager");
+
+      if (memErr) throw memErr;
+
+      const ids = (memberships ?? []).map((m) => m.workspace_id).filter(Boolean);
+      if (ids.length === 0) return [];
+
+      const { data: scoped, error: wsErr } = await supabase
+        .from("workspaces")
+        .select("*")
+        .in("id", ids)
+        .order("created_at", { ascending: false });
+
+      if (wsErr) throw wsErr;
+      return scoped ?? [];
+    },
+  });
+
+  // Used to scope accounts/members to only visible workspaces for account_manager
+  const workspaceIds = useMemo(() => workspaces.map((w) => w.id), [workspaces]);
+
+  const { data: accounts = [] } = useQuery({
+    queryKey: ["accounts", workspaceIds.join("|")],
+    enabled: !loading && workspaceIds.length > 0 && canViewWorkspaces,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("social_accounts")
+        .select("*")
+        .in("workspace_id", workspaceIds);
+
       if (error) throw error;
       return data ?? [];
     },
   });
 
   const { data: members = [] } = useQuery({
-    queryKey: ["members"],
-    enabled: !loading && canViewWorkspaces,
+    queryKey: ["members", workspaceIds.join("|")],
+    enabled: !loading && workspaceIds.length > 0 && canViewWorkspaces,
     queryFn: async () => {
-      const { data, error } = await supabase.from("workspace_members").select("*");
+      const { data, error } = await supabase
+        .from("workspace_members")
+        .select("*")
+        .in("workspace_id", workspaceIds);
+
       if (error) throw error;
       return data ?? [];
     },
@@ -119,6 +168,7 @@ export default function Workspaces() {
       if (wsErr) throw wsErr;
       if (!ws?.id) throw new Error("Workspace created but no id returned");
 
+      // Optional: creator becomes a member (matches your prior behavior)
       const { error: wmErr } = await supabase
         .from("workspace_members")
         .upsert(
@@ -139,11 +189,7 @@ export default function Workspaces() {
     },
     onError: (err) => {
       console.error("[Workspaces] create error:", err);
-      const msg =
-        err?.message ||
-        err?.details ||
-        (typeof err === "string" ? err : "Failed to create workspace");
-      toast.error(msg);
+      toast.error(err?.message || err?.details || "Failed to create workspace");
     },
   });
 
@@ -245,9 +291,7 @@ export default function Workspaces() {
   };
 
   const handleDelete = (workspace) => {
-    if (
-      confirm(`Are you sure you want to delete "${workspace.name}"? This cannot be undone.`)
-    ) {
+    if (confirm(`Are you sure you want to delete "${workspace.name}"? This cannot be undone.`)) {
       deleteMutation.mutate(workspace.id);
     }
   };
@@ -265,7 +309,7 @@ export default function Workspaces() {
   };
 
   // ---- Guards ----
-  if (loading) {
+  if (loading || loadingAuthUser) {
     return (
       <div className="max-w-[1200px] mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <Skeleton className="h-8 w-48 mb-6" />
@@ -392,12 +436,10 @@ export default function Workspaces() {
                       {canAdminWorkspaces && (
                         <>
                           <DropdownMenuSeparator />
-
                           <DropdownMenuItem onClick={() => openEditDialog(workspace)}>
                             <Pencil className="w-4 h-4 mr-2" />
                             Edit
                           </DropdownMenuItem>
-
                           <DropdownMenuItem
                             className="text-red-600"
                             onClick={() => handleDelete(workspace)}
@@ -416,11 +458,7 @@ export default function Workspaces() {
                   <div className="flex items-center justify-between mb-4 pb-4 border-b border-slate-200">
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-medium text-slate-700">Status:</span>
-                      <span
-                        className={`text-sm ${
-                          workspace.is_active ? "text-green-600" : "text-slate-400"
-                        }`}
-                      >
+                      <span className={`text-sm ${workspace.is_active ? "text-green-600" : "text-slate-400"}`}>
                         {workspace.is_active ? "Active" : "Archived"}
                       </span>
                     </div>
@@ -476,7 +514,7 @@ export default function Workspaces() {
         </div>
       )}
 
-      {/* Create/Edit Dialog (admin-only access via buttons, but also hard-guard just in case) */}
+      {/* Create/Edit Dialog (admin-only usage) */}
       <Dialog
         open={showDialog}
         onOpenChange={(open) => {
@@ -525,19 +563,10 @@ export default function Workspaces() {
             </div>
 
             <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setShowDialog(false)}
-              >
+              <Button type="button" variant="outline" onClick={() => setShowDialog(false)}>
                 Cancel
               </Button>
-              <Button
-                type="submit"
-                disabled={
-                  createMutation.isPending || updateMutation.isPending || !canAdminWorkspaces
-                }
-              >
+              <Button type="submit" disabled={createMutation.isPending || updateMutation.isPending}>
                 {(createMutation.isPending || updateMutation.isPending) && (
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                 )}
