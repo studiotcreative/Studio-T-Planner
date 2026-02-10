@@ -1,3 +1,4 @@
+// Planner/src/pages/BrandGuidelines.jsx
 import React, { useMemo } from "react";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { supabase } from "@/api/supabaseClient";
@@ -18,13 +19,16 @@ export default function BrandGuidelines() {
   const urlParams = new URLSearchParams(window.location.search);
   const workspaceId = urlParams.get("workspace");
 
+  // -----------------------------
+  // Workspace (title only)
+  // -----------------------------
   const { data: workspace, isLoading: loadingWorkspace } = useQuery({
     queryKey: ["workspace", workspaceId],
     enabled: !!workspaceId && !loading,
     queryFn: async () => {
       const { data, error } = await supabase
         .from("workspaces")
-        .select("*")
+        .select("id, name, slug")
         .eq("id", workspaceId)
         .single();
 
@@ -33,73 +37,80 @@ export default function BrandGuidelines() {
     },
   });
 
-  // NOTE: brand_guidelines table stores most fields inside `data` jsonb
+  // -----------------------------
+  // Brand Guidelines Row
+  // Schema: id, workspace_id, data(jsonb), additional_notes(text), updated_by, created_at, updated_at
+  // -----------------------------
   const { data: guidelinesRow, isLoading: loadingGuidelines } = useQuery({
-    queryKey: ["brandGuidelines", workspaceId],
+    queryKey: ["brandGuidelinesRow", workspaceId],
     enabled: !!workspaceId && !loading,
     queryFn: async () => {
       const { data, error } = await supabase
         .from("brand_guidelines")
         .select("id, workspace_id, data, additional_notes, created_at, updated_at")
         .eq("workspace_id", workspaceId)
-        .maybeSingle(); // returns null if no row
+        .maybeSingle();
 
       if (error) throw error;
       return data ?? null;
     },
   });
 
-  // Flatten DB row -> form-friendly object (what BrandGuidelinesForm expects)
+  // Flatten DB row -> what the form expects
   const guidelines = useMemo(() => {
     if (!guidelinesRow) return null;
+
     const saved = guidelinesRow.data ?? {};
     return {
       ...saved,
       additional_notes: guidelinesRow.additional_notes ?? "",
-      // keep id if your form relies on it (harmless)
+      // keep these harmlessly in case your form reads them
       id: guidelinesRow.id,
       workspace_id: guidelinesRow.workspace_id,
     };
   }, [guidelinesRow]);
 
+  // -----------------------------
+  // SAVE (UPSERT)
+  // Writes:
+  //   - additional_notes -> column
+  //   - everything else -> data jsonb
+  // -----------------------------
   const saveMutation = useMutation({
     mutationFn: async (formData) => {
-      // Separate additional_notes (real column) from everything else (goes into jsonb)
-      const { additional_notes, id: _ignoreId, workspace_id: _ignoreWs, ...rest } = formData || {};
+      if (!workspaceId) throw new Error("Missing workspace id");
+
+      const incoming = formData || {};
+
+      // remove fields that should NOT go into jsonb
+      const {
+        additional_notes = "",
+        id: _ignoreId,
+        workspace_id: _ignoreWs,
+        created_at: _ignoreCreated,
+        updated_at: _ignoreUpdated,
+        ...jsonFields
+      } = incoming;
 
       const payload = {
         workspace_id: workspaceId,
         additional_notes: additional_notes ?? "",
-        data: {
-          ...rest,
-        },
+        data: jsonFields, // ALL other form fields live here
         updated_at: new Date().toISOString(),
       };
 
-      // Update if row exists; otherwise insert
-      if (guidelinesRow?.id) {
-        const { data, error } = await supabase
-          .from("brand_guidelines")
-          .update(payload)
-          .eq("id", guidelinesRow.id)
-          .select("id, workspace_id, data, additional_notes, created_at, updated_at")
-          .single();
+      // Upsert ensures "create if missing / update if exists"
+      const { data, error } = await supabase
+        .from("brand_guidelines")
+        .upsert(payload, { onConflict: "workspace_id" })
+        .select("id, workspace_id, data, additional_notes, created_at, updated_at")
+        .single();
 
-        if (error) throw error;
-        return data;
-      } else {
-        const { data, error } = await supabase
-          .from("brand_guidelines")
-          .insert(payload)
-          .select("id, workspace_id, data, additional_notes, created_at, updated_at")
-          .single();
-
-        if (error) throw error;
-        return data;
-      }
+      if (error) throw error;
+      return data;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["brandGuidelines", workspaceId] });
+      queryClient.invalidateQueries({ queryKey: ["brandGuidelinesRow", workspaceId] });
       toast.success("Brand guidelines saved successfully");
     },
     onError: (err) => {
@@ -108,6 +119,9 @@ export default function BrandGuidelines() {
     },
   });
 
+  // -----------------------------
+  // Guards
+  // -----------------------------
   if (!workspaceId) {
     return (
       <div className="min-h-screen bg-gray-50 p-8 flex items-center justify-center">
@@ -132,6 +146,9 @@ export default function BrandGuidelines() {
     );
   }
 
+  // -----------------------------
+  // UI
+  // -----------------------------
   return (
     <div className="min-h-screen bg-gray-50 p-8">
       <div className="max-w-4xl mx-auto">
