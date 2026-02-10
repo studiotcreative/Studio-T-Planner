@@ -12,6 +12,8 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 
+const ALLOWED_WORKSPACE_ROLES = ["account_manager", "client_viewer", "client_approver"];
+
 function safeMessage(err) {
   if (!err) return "Unknown error";
   if (typeof err === "string") return err;
@@ -44,7 +46,8 @@ export default function Team() {
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteGlobalRole, setInviteGlobalRole] = useState("user"); // user|admin
   const [inviteWorkspaceId, setInviteWorkspaceId] = useState("");
-  const [inviteWorkspaceRole, setInviteWorkspaceRole] = useState("viewer"); // workspace_role enum
+  // ✅ FIX: must match enum (viewer is NOT allowed)
+  const [inviteWorkspaceRole, setInviteWorkspaceRole] = useState("client_viewer");
 
   // Action state
   const [busyKey, setBusyKey] = useState(""); // e.g. "invite" | "role:<id>" | "delete:<id>"...
@@ -124,11 +127,17 @@ export default function Team() {
     try {
       const token = await getAccessTokenOrThrow();
 
+      // ✅ Guard: only send allowed enum roles if a workspace is selected
+      const wsRole = inviteWorkspaceId ? inviteWorkspaceRole : null;
+      if (wsRole && !ALLOWED_WORKSPACE_ROLES.includes(wsRole)) {
+        throw new Error(`Invalid workspace role: ${wsRole}`);
+      }
+
       const payload = {
         email,
         role: inviteGlobalRole, // "admin" | "user"
         workspace_id: inviteWorkspaceId || null,
-        workspace_role: inviteWorkspaceId ? inviteWorkspaceRole : null,
+        workspace_role: inviteWorkspaceId ? wsRole : null,
       };
 
       // IMPORTANT: attach Authorization header explicitly
@@ -161,7 +170,8 @@ export default function Team() {
       setInviteEmail("");
       setInviteGlobalRole("user");
       setInviteWorkspaceId("");
-      setInviteWorkspaceRole("viewer");
+      // ✅ FIX: reset to valid enum
+      setInviteWorkspaceRole("client_viewer");
 
       alert(data?.mode === "existing" ? "User updated ✅" : "Invite sent ✅");
     } catch (e) {
@@ -200,6 +210,12 @@ export default function Team() {
   async function assignToWorkspace(targetUserId, workspaceId, role) {
     if (!targetUserId || !workspaceId) return;
     const key = `ws:${targetUserId}:${workspaceId}`;
+
+    // ✅ Guard: never allow invalid enum values
+    if (!ALLOWED_WORKSPACE_ROLES.includes(role)) {
+      alert(`Invalid workspace role: ${role}`);
+      return;
+    }
 
     setBusyKey(key);
     try {
@@ -385,11 +401,7 @@ export default function Team() {
             <div className="md:col-span-3" />
 
             <div className="flex items-end">
-              <Button
-                disabled={busy("invite") || !inviteEmail.trim()}
-                onClick={inviteUser}
-                className="w-full"
-              >
+              <Button disabled={busy("invite") || !inviteEmail.trim()} onClick={inviteUser} className="w-full">
                 {busy("invite") ? "Working..." : "Invite"}
               </Button>
             </div>
@@ -400,12 +412,7 @@ export default function Team() {
       {/* Search */}
       <div className="relative mb-6">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-        <Input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search team members..."
-          className="pl-10 bg-white"
-        />
+        <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search team members..." className="pl-10 bg-white" />
       </div>
 
       {/* Stats */}
@@ -469,9 +476,7 @@ export default function Team() {
 
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
-                          <h3 className="font-medium text-slate-900 truncate">
-                            {u.full_name || "No name"}
-                          </h3>
+                          <h3 className="font-medium text-slate-900 truncate">{u.full_name || "No name"}</h3>
                           <RoleBadge role={u.role} />
                           {isSelf && <Badge className="bg-emerald-100 text-emerald-700">You</Badge>}
                         </div>
@@ -500,7 +505,8 @@ export default function Team() {
                         onChange={(e) => {
                           const wsId = e.target.value;
                           if (!wsId) return;
-                          assignToWorkspace(u.id, wsId, "viewer");
+                          // ✅ FIX: use valid enum role
+                          assignToWorkspace(u.id, wsId, "client_viewer");
                           e.target.value = "";
                         }}
                         disabled={anyBusy || Boolean(workspacesErr) || loadingWorkspaces}
@@ -543,9 +549,7 @@ export default function Team() {
               );
             })}
 
-            {filteredUsers.length === 0 && (
-              <div className="p-8 text-center text-slate-500">No team members match your search.</div>
-            )}
+            {filteredUsers.length === 0 && <div className="p-8 text-center text-slate-500">No team members match your search.</div>}
           </div>
         </div>
       )}
