@@ -46,8 +46,10 @@ export default function Team() {
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteGlobalRole, setInviteGlobalRole] = useState("user"); // user|admin
   const [inviteWorkspaceId, setInviteWorkspaceId] = useState("");
-  // ✅ FIX: must match enum (viewer is NOT allowed)
-  const [inviteWorkspaceRole, setInviteWorkspaceRole] = useState("client_viewer");
+  const [inviteWorkspaceRole, setInviteWorkspaceRole] = useState("client_viewer"); // enum-safe
+
+  // ✅ Per-user workspace role selection (for Add to workspace...)
+  const [perUserWorkspaceRole, setPerUserWorkspaceRole] = useState({});
 
   // Action state
   const [busyKey, setBusyKey] = useState(""); // e.g. "invite" | "role:<id>" | "delete:<id>"...
@@ -71,8 +73,7 @@ export default function Team() {
     },
   });
 
-  // Workspaces (optional dropdown). If this errors (you currently have 500s),
-  // we keep the page working and show a small warning.
+  // Workspaces
   const {
     data: workspaces = [],
     isLoading: loadingWorkspaces,
@@ -127,7 +128,6 @@ export default function Team() {
     try {
       const token = await getAccessTokenOrThrow();
 
-      // ✅ Guard: only send allowed enum roles if a workspace is selected
       const wsRole = inviteWorkspaceId ? inviteWorkspaceRole : null;
       if (wsRole && !ALLOWED_WORKSPACE_ROLES.includes(wsRole)) {
         throw new Error(`Invalid workspace role: ${wsRole}`);
@@ -140,14 +140,12 @@ export default function Team() {
         workspace_role: inviteWorkspaceId ? wsRole : null,
       };
 
-      // IMPORTANT: attach Authorization header explicitly
       const { data, error } = await supabase.functions.invoke("invite-user", {
         body: payload,
         headers: { Authorization: `Bearer ${token}` },
       });
 
       if (error) {
-        // This often contains a generic message; try to surface details:
         const msg = error?.context?.response
           ? await error.context.response.text().catch(() => null)
           : null;
@@ -170,7 +168,6 @@ export default function Team() {
       setInviteEmail("");
       setInviteGlobalRole("user");
       setInviteWorkspaceId("");
-      // ✅ FIX: reset to valid enum
       setInviteWorkspaceRole("client_viewer");
 
       alert(data?.mode === "existing" ? "User updated ✅" : "Invite sent ✅");
@@ -186,7 +183,6 @@ export default function Team() {
     if (!targetUserId) return;
     const key = `role:${targetUserId}`;
 
-    // prevent self-role change here (optional safety)
     if (user?.id && targetUserId === user.id) {
       alert("You cannot change your own role here.");
       return;
@@ -211,7 +207,6 @@ export default function Team() {
     if (!targetUserId || !workspaceId) return;
     const key = `ws:${targetUserId}:${workspaceId}`;
 
-    // ✅ Guard: never allow invalid enum values
     if (!ALLOWED_WORKSPACE_ROLES.includes(role)) {
       alert(`Invalid workspace role: ${role}`);
       return;
@@ -237,7 +232,6 @@ export default function Team() {
   async function removeUser(targetUserId, mode) {
     if (!targetUserId) return;
 
-    // prevent self-remove
     if (user?.id && targetUserId === user.id) {
       alert("You cannot remove yourself.");
       return;
@@ -312,7 +306,7 @@ export default function Team() {
         </div>
       </div>
 
-      {/* Workspaces warning (you currently have 500s) */}
+      {/* Workspaces warning */}
       {workspacesErr && (
         <div className="mb-6 text-sm bg-amber-50 border border-amber-200 text-amber-900 rounded-xl p-4">
           <div className="font-medium">Workspaces failed to load.</div>
@@ -412,7 +406,12 @@ export default function Team() {
       {/* Search */}
       <div className="relative mb-6">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-        <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search team members..." className="pl-10 bg-white" />
+        <Input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search team members..."
+          className="pl-10 bg-white"
+        />
       </div>
 
       {/* Stats */}
@@ -499,43 +498,43 @@ export default function Team() {
                       </select>
 
                       {/* Workspace role (per user) */}
-<select
-  className="h-9 border rounded-md px-2 text-sm"
-  value={perUserWorkspaceRole[u.id] ?? "account_manager"}
-  onChange={(e) =>
-    setPerUserWorkspaceRole((prev) => ({ ...prev, [u.id]: e.target.value }))
-  }
-  disabled={anyBusy}
-  title="Workspace role"
->
-  <option value="account_manager">account_manager</option>
-  <option value="client_viewer">client_viewer</option>
-  <option value="client_approver">client_approver</option>
-</select>
+                      <select
+                        className="h-9 border rounded-md px-2 text-sm"
+                        value={perUserWorkspaceRole[u.id] ?? "account_manager"}
+                        onChange={(e) =>
+                          setPerUserWorkspaceRole((prev) => ({ ...prev, [u.id]: e.target.value }))
+                        }
+                        disabled={anyBusy}
+                        title="Workspace role"
+                      >
+                        <option value="account_manager">account_manager</option>
+                        <option value="client_viewer">client_viewer</option>
+                        <option value="client_approver">client_approver</option>
+                      </select>
 
-{/* Add to workspace */}
-<select
-  className="h-9 border rounded-md px-2 text-sm"
-  defaultValue=""
-  onChange={(e) => {
-    const wsId = e.target.value;
-    if (!wsId) return;
+                      {/* Add to workspace */}
+                      <select
+                        className="h-9 border rounded-md px-2 text-sm"
+                        defaultValue=""
+                        onChange={(e) => {
+                          const wsId = e.target.value;
+                          if (!wsId) return;
 
-    const role = perUserWorkspaceRole[u.id] ?? "account_manager";
-    assignToWorkspace(u.id, wsId, role);
+                          const role = perUserWorkspaceRole[u.id] ?? "account_manager";
+                          assignToWorkspace(u.id, wsId, role);
 
-    e.target.value = "";
-  }}
-  disabled={anyBusy || Boolean(workspacesErr) || loadingWorkspaces}
-  title={workspacesErr ? "Workspaces failed to load" : "Assign to workspace"}
->
-  <option value="">Add to workspace…</option>
-  {workspaces.map((w) => (
-    <option key={w.id} value={w.id}>
-      {w.name}
-    </option>
-  ))}
-</select>
+                          e.target.value = "";
+                        }}
+                        disabled={anyBusy || Boolean(workspacesErr) || loadingWorkspaces}
+                        title={workspacesErr ? "Workspaces failed to load" : "Assign to workspace"}
+                      >
+                        <option value="">Add to workspace…</option>
+                        {workspaces.map((w) => (
+                          <option key={w.id} value={w.id}>
+                            {w.name}
+                          </option>
+                        ))}
+                      </select>
 
                       {/* Soft remove */}
                       <Button
@@ -566,11 +565,14 @@ export default function Team() {
               );
             })}
 
-            {filteredUsers.length === 0 && <div className="p-8 text-center text-slate-500">No team members match your search.</div>}
+            {filteredUsers.length === 0 && (
+              <div className="p-8 text-center text-slate-500">No team members match your search.</div>
+            )}
           </div>
         </div>
       )}
     </div>
   );
 }
+
 
