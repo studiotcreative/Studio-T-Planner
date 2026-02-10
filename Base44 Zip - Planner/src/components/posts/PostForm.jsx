@@ -1,9 +1,8 @@
 // src/components/posts/PostForm.jsx
-import React, { useState, useEffect } from 'react';
-import { supabase } from '@/api/supabaseClient';
-import { useQuery } from '@tanstack/react-query';
-import { useAuth } from '@/components/auth/AuthProvider';
-import { format } from 'date-fns';
+import React, { useState, useEffect, useMemo } from "react";
+import { supabase } from "@/api/supabaseClient";
+import { useQuery } from "@tanstack/react-query";
+import { useAuth } from "@/components/auth/AuthProvider";
 import {
   Upload,
   X,
@@ -12,14 +11,14 @@ import {
   Check,
   Image,
   Video,
-  Calendar,
   Clock,
   Hash,
   Eye,
   EyeOff,
   Loader2,
-  Trash2
-} from 'lucide-react';
+  Trash2,
+  Calendar,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -29,69 +28,61 @@ import {
   SelectContent,
   SelectItem,
   SelectTrigger,
-  SelectValue
+  SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
-import PlatformIcon from '@/components/ui/PlatformIcon';
-import StatusBadge, { statusConfig } from '@/components/ui/StatusBadge';
+import PlatformIcon from "@/components/ui/PlatformIcon";
 
-const STORAGE_BUCKET = 'post-assets'; // <-- change if your bucket name is different
+const STORAGE_BUCKET = "post-assets"; // confirm matches your Supabase Storage bucket
 
-export default function PostForm({
-  post,
-  onSave,
-  onDelete,
-  initialDate,
-  isLoading
-}) {
+export default function PostForm({ post, onSave, onDelete, initialDate, isLoading }) {
   const { user, isAdmin, isClient, assignedAccounts } = useAuth();
 
   const [formData, setFormData] = useState({
-    social_account_id: '',
-    workspace_id: '',
-    platform: '',
-    scheduled_date: initialDate || '',
-    scheduled_time: '',
-    caption: '',
-    hashtags: '',
-    first_comment: '',
-    internal_notes: '',
-    client_notes: '',
+    social_account_id: "",
+    workspace_id: "",
+    platform: "",
+    scheduled_date: initialDate || "",
+    scheduled_time: "",
+    caption: "",
+    hashtags: "",
+    first_comment: "",
+    internal_notes: "",
+    client_notes: "",
     asset_urls: [],
     asset_types: [],
-    order_index: 0
+    order_index: 0,
   });
 
   const [uploading, setUploading] = useState(false);
   const [copied, setCopied] = useState(null);
 
+  // --------------------------
+  // Queries
+  // --------------------------
   const { data: allAccounts = [] } = useQuery({
-    queryKey: ['accounts'],
+    queryKey: ["accounts"],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('social_accounts')
-        .select('*');
-
+      const { data, error } = await supabase.from("social_accounts").select("*");
       if (error) throw error;
       return data ?? [];
-    }
+    },
   });
 
   const { data: workspaces = [] } = useQuery({
-    queryKey: ['workspaces'],
+    queryKey: ["workspaces"],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('workspaces')
-        .select('*');
-
+      const { data, error } = await supabase.from("workspaces").select("*");
       if (error) throw error;
       return data ?? [];
-    }
+    },
   });
 
-  // Filter accounts based on role (keeps your existing behavior)
-  const accounts = React.useMemo(() => {
+  // --------------------------
+  // Accounts (role-scoped)
+  // --------------------------
+  const accounts = useMemo(() => {
     if (isAdmin()) return allAccounts;
 
     // Prefer auth-provided accounts if present
@@ -99,137 +90,157 @@ export default function PostForm({
       return assignedAccounts;
     }
 
-    // Fallback to legacy fields
-    return allAccounts.filter(acc =>
-      acc.assigned_manager_email === user?.email ||
-      acc.collaborator_emails?.includes(user?.email)
+    // Legacy fallback
+    return allAccounts.filter(
+      (acc) =>
+        acc.assigned_manager_email === user?.email ||
+        acc.collaborator_emails?.includes(user?.email)
     );
   }, [allAccounts, isAdmin, user, assignedAccounts]);
 
+  // --------------------------
+  // Filter accounts by selected workspace (this is the key improvement)
+  // --------------------------
+  const accountsForSelectedWorkspace = useMemo(() => {
+    const wsId = formData.workspace_id;
+    if (!wsId) return accounts;
+    return accounts.filter((a) => a.workspace_id === wsId);
+  }, [accounts, formData.workspace_id]);
+
+  // --------------------------
   // Initialize form with post data
+  // --------------------------
   useEffect(() => {
     if (post) {
       setFormData({
-        social_account_id: post.social_account_id || '',
-        workspace_id: post.workspace_id || '',
-        platform: post.platform || '',
-        scheduled_date: post.scheduled_date || '',
-        scheduled_time: post.scheduled_time || '',
-        caption: post.caption || '',
-        hashtags: post.hashtags || '',
-        first_comment: post.first_comment || '',
-        internal_notes: post.internal_notes || '',
-        client_notes: post.client_notes || '',
+        social_account_id: post.social_account_id || "",
+        workspace_id: post.workspace_id || "",
+        platform: post.platform || "",
+        scheduled_date: post.scheduled_date || "",
+        scheduled_time: post.scheduled_time || "",
+        caption: post.caption || "",
+        hashtags: post.hashtags || "",
+        first_comment: post.first_comment || "",
+        internal_notes: post.internal_notes || "",
+        client_notes: post.client_notes || "",
         asset_urls: post.asset_urls || [],
         asset_types: post.asset_types || [],
-        order_index: post.order_index || 0
+        order_index: post.order_index || 0,
       });
     } else {
-      // if creating new post, keep initialDate
-      setFormData(prev => ({
+      // New post: keep initialDate
+      setFormData((prev) => ({
         ...prev,
-        scheduled_date: initialDate || prev.scheduled_date || ''
+        scheduled_date: initialDate || prev.scheduled_date || "",
       }));
     }
   }, [post, initialDate]);
 
-  // Update workspace and platform when account changes
-  const handleAccountChange = (accountId) => {
-    const account = accounts.find(a => a.id === accountId);
-    if (account) {
-      setFormData(prev => ({
+  // If workspace changes and selected account doesn't belong, clear it
+  useEffect(() => {
+    if (!formData.workspace_id) return;
+    if (!formData.social_account_id) return;
+
+    const selected = accounts.find((a) => a.id === formData.social_account_id);
+    if (!selected) return;
+
+    if (selected.workspace_id !== formData.workspace_id) {
+      setFormData((prev) => ({
         ...prev,
-        social_account_id: accountId,
-        workspace_id: account.workspace_id,
-        platform: account.platform
-      }));
-    } else {
-      setFormData(prev => ({
-        ...prev,
-        social_account_id: accountId
+        social_account_id: "",
+        platform: "",
       }));
     }
+  }, [formData.workspace_id, formData.social_account_id, accounts]);
+
+  // --------------------------
+  // Handlers
+  // --------------------------
+  const handleWorkspaceChange = (workspaceId) => {
+    setFormData((prev) => ({
+      ...prev,
+      workspace_id: workspaceId,
+      // DO NOT force-clear account here; the useEffect above clears only if mismatched
+    }));
+  };
+
+  const handleAccountChange = (accountId) => {
+    const account = accounts.find((a) => a.id === accountId);
+
+    if (!account) {
+      setFormData((prev) => ({ ...prev, social_account_id: accountId }));
+      return;
+    }
+
+    setFormData((prev) => ({
+      ...prev,
+      social_account_id: accountId,
+      workspace_id: account.workspace_id || prev.workspace_id,
+      platform: account.platform || prev.platform,
+    }));
   };
 
   const buildStoragePath = ({ workspaceId, accountId, filename }) => {
-    const safeName = filename.replace(/[^\w.\-]+/g, '_');
+    const safeName = filename.replace(/[^\w.\-]+/g, "_");
     const ts = Date.now();
-    return `${workspaceId || 'unknown-workspace'}/${accountId || 'unknown-account'}/${ts}-${safeName}`;
+    return `${workspaceId || "unknown-workspace"}/${accountId || "unknown-account"}/${ts}-${safeName}`;
   };
 
   const handleFileUpload = async (e) => {
-    console.log("[UPLOAD] handleFileUpload start", e?.target?.files);
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
 
-    // Require account selection so we can place files in a good folder
     if (!formData.social_account_id) {
-      toast.error('Select a social account before uploading.');
+      toast.error("Select a social account before uploading.");
       return;
     }
 
     setUploading(true);
     try {
-      const workspaceId = formData.workspace_id || 'unknown-workspace';
+      const workspaceId = formData.workspace_id || "unknown-workspace";
       const accountId = formData.social_account_id;
 
-      // Upload each file to Supabase Storage
       const uploaded = [];
       for (const file of files) {
-        const path = buildStoragePath({
-          workspaceId,
-          accountId,
-          filename: file.name
+        const path = buildStoragePath({ workspaceId, accountId, filename: file.name });
+
+        const { error: upErr } = await supabase.storage.from(STORAGE_BUCKET).upload(path, file, {
+          cacheControl: "3600",
+          upsert: false,
         });
-
-        const { error: upErr } = await supabase
-          .storage
-          .from(STORAGE_BUCKET)
-          .upload(path, file, {
-            cacheControl: '3600',
-            upsert: false
-          });
-
         if (upErr) throw upErr;
 
-        // Get a URL you can store/use in the app
-        const { data: pub } = supabase
-          .storage
-          .from(STORAGE_BUCKET)
-          .getPublicUrl(path);
-
+        const { data: pub } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(path);
         const url = pub?.publicUrl;
-        if (!url) throw new Error('Failed to generate public URL for upload.');
+        if (!url) throw new Error("Failed to generate public URL for upload.");
 
         uploaded.push({
           url,
-          type: file.type.startsWith('video') ? 'video' : 'image'
+          type: file.type.startsWith("video") ? "video" : "image",
         });
       }
 
-      setFormData(prev => ({
+      setFormData((prev) => ({
         ...prev,
-        asset_urls: [...prev.asset_urls, ...uploaded.map(u => u.url)],
-        asset_types: [...prev.asset_types, ...uploaded.map(u => u.type)]
+        asset_urls: [...prev.asset_urls, ...uploaded.map((u) => u.url)],
+        asset_types: [...prev.asset_types, ...uploaded.map((u) => u.type)],
       }));
 
       toast.success(`${files.length} file(s) uploaded`);
     } catch (error) {
       console.error(error);
-      toast.error('Failed to upload files (check bucket name + Storage permissions)');
+      toast.error("Failed to upload files (check bucket name + Storage permissions)");
     } finally {
       setUploading(false);
-
-      // Reset input so user can upload same file again if needed
-      e.target.value = '';
+      e.target.value = "";
     }
   };
 
   const removeAsset = (index) => {
-    setFormData(prev => ({
+    setFormData((prev) => ({
       ...prev,
       asset_urls: prev.asset_urls.filter((_, i) => i !== index),
-      asset_types: prev.asset_types.filter((_, i) => i !== index)
+      asset_types: prev.asset_types.filter((_, i) => i !== index),
     }));
   };
 
@@ -241,7 +252,7 @@ export default function PostForm({
   };
 
   const downloadAsset = (url, index) => {
-    const link = document.createElement('a');
+    const link = document.createElement("a");
     link.href = url;
     link.download = `asset-${index + 1}`;
     link.click();
@@ -251,32 +262,63 @@ export default function PostForm({
     formData.asset_urls.forEach((url, i) => {
       setTimeout(() => downloadAsset(url, i), i * 500);
     });
-    toast.success('Downloading all assets...');
+    toast.success("Downloading all assets...");
   };
 
   const handleSubmit = (e) => {
-  e.preventDefault();
-  if (!formData.social_account_id) {
-    toast.error("Please select an account");
-    return;
-  }
+    e.preventDefault();
 
-  // Status/approval fields are controlled by PostEditor header + RPC flows
-  const { status, approval_status, approved_by, approved_at, ...safeData } = formData;
+    if (!formData.workspace_id) {
+      toast.error("Please select a workspace.");
+      return;
+    }
 
-  onSave(safeData);
-};
+    if (!formData.social_account_id) {
+      toast.error("Please select a social account.");
+      return;
+    }
 
-  const selectedAccount = accounts.find(a => a.id === formData.social_account_id);
-  const selectedWorkspace = workspaces.find(w => w.id === formData.workspace_id);
+    // Keep PostEditor as status authority (don’t send status fields)
+    const { status, approval_status, approved_by, approved_at, ...safeData } = formData;
+    onSave(safeData);
+  };
 
+  const selectedAccount = accounts.find((a) => a.id === formData.social_account_id);
+  const selectedWorkspace = workspaces.find((w) => w.id === formData.workspace_id);
+
+  // --------------------------
+  // UI
+  // --------------------------
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
-      {/* Account Selection */}
+      {/* Account & Schedule */}
       <div className="bg-white rounded-xl border border-slate-200/60 p-6">
         <h3 className="text-sm font-medium text-slate-700 mb-4">Account & Schedule</h3>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* ONE ROW on desktop: Workspace | Social Account | Day | Time */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          {/* Workspace */}
+          <div>
+            <Label>Workspace</Label>
+            <Select
+              value={formData.workspace_id}
+              onValueChange={handleWorkspaceChange}
+              disabled={isClient()}
+            >
+              <SelectTrigger className="mt-1.5">
+                <SelectValue placeholder="Select workspace" />
+              </SelectTrigger>
+              <SelectContent>
+                {workspaces.map((w) => (
+                  <SelectItem key={w.id} value={w.id}>
+                    {w.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Social Account (filtered by workspace) */}
           <div>
             <Label>Social Account</Label>
             <Select
@@ -288,7 +330,7 @@ export default function PostForm({
                 <SelectValue placeholder="Select account" />
               </SelectTrigger>
               <SelectContent>
-                {accounts.map(account => (
+                {accountsForSelectedWorkspace.map((account) => (
                   <SelectItem key={account.id} value={account.id}>
                     <div className="flex items-center gap-2">
                       <PlatformIcon platform={account.platform} size="sm" />
@@ -300,16 +342,30 @@ export default function PostForm({
             </Select>
           </div>
 
-          {/* Status is controlled by the header dropdown in PostEditor (RPC). */}
+          {/* Scheduled Day */}
+          <div>
+            <Label>Scheduled Day</Label>
+            <div className="relative mt-1.5">
+              <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+              <Input
+                type="date"
+                value={formData.scheduled_date || ""}
+                onChange={(e) => setFormData((prev) => ({ ...prev, scheduled_date: e.target.value }))}
+                className="pl-10"
+                disabled={isClient()}
+              />
+            </div>
+          </div>
 
+          {/* Scheduled Time */}
           <div>
             <Label>Scheduled Time</Label>
             <div className="relative mt-1.5">
               <Clock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
               <Input
                 type="time"
-                value={formData.scheduled_time}
-                onChange={(e) => setFormData(prev => ({ ...prev, scheduled_time: e.target.value }))}
+                value={formData.scheduled_time || ""}
+                onChange={(e) => setFormData((prev) => ({ ...prev, scheduled_time: e.target.value }))}
                 className="pl-10"
                 disabled={isClient()}
               />
@@ -317,11 +373,14 @@ export default function PostForm({
           </div>
         </div>
 
-        {selectedWorkspace && (
-          <div className="mt-4 flex items-center gap-2 text-sm text-slate-500">
-            <span className="px-2 py-1 bg-slate-100 rounded-md font-medium">
-              {selectedWorkspace.name}
-            </span>
+        {/* Small context line */}
+        {(selectedWorkspace || selectedAccount) && (
+          <div className="mt-4 flex flex-wrap items-center gap-2 text-sm text-slate-500">
+            {selectedWorkspace && (
+              <span className="px-2 py-1 bg-slate-100 rounded-md font-medium">
+                {selectedWorkspace.name}
+              </span>
+            )}
             {selectedAccount && (
               <span className="flex items-center gap-1">
                 <PlatformIcon platform={selectedAccount.platform} size="sm" />
@@ -347,7 +406,7 @@ export default function PostForm({
             <div className="relative">
               <Textarea
                 value={formData.caption}
-                onChange={(e) => setFormData(prev => ({ ...prev, caption: e.target.value }))}
+                onChange={(e) => setFormData((prev) => ({ ...prev, caption: e.target.value }))}
                 placeholder="Write your caption..."
                 className="min-h-[200px] resize-none"
                 disabled={isClient()}
@@ -358,9 +417,9 @@ export default function PostForm({
                   variant="ghost"
                   size="sm"
                   className="absolute top-2 right-2"
-                  onClick={() => copyToClipboard(formData.caption, 'Caption')}
+                  onClick={() => copyToClipboard(formData.caption, "Caption")}
                 >
-                  {copied === 'Caption' ? (
+                  {copied === "Caption" ? (
                     <Check className="w-4 h-4 text-green-600" />
                   ) : (
                     <Copy className="w-4 h-4" />
@@ -368,9 +427,7 @@ export default function PostForm({
                 </Button>
               )}
             </div>
-            <p className="text-xs text-slate-400 mt-2">
-              {formData.caption.length} characters
-            </p>
+            <p className="text-xs text-slate-400 mt-2">{formData.caption.length} characters</p>
           </TabsContent>
 
           <TabsContent value="hashtags">
@@ -380,7 +437,7 @@ export default function PostForm({
               </div>
               <Textarea
                 value={formData.hashtags}
-                onChange={(e) => setFormData(prev => ({ ...prev, hashtags: e.target.value }))}
+                onChange={(e) => setFormData((prev) => ({ ...prev, hashtags: e.target.value }))}
                 placeholder="#hashtag1 #hashtag2 #hashtag3"
                 className="min-h-[150px] pl-10 resize-none"
                 disabled={isClient()}
@@ -391,9 +448,9 @@ export default function PostForm({
                   variant="ghost"
                   size="sm"
                   className="absolute top-2 right-2"
-                  onClick={() => copyToClipboard(formData.hashtags, 'Hashtags')}
+                  onClick={() => copyToClipboard(formData.hashtags, "Hashtags")}
                 >
-                  {copied === 'Hashtags' ? (
+                  {copied === "Hashtags" ? (
                     <Check className="w-4 h-4 text-green-600" />
                   ) : (
                     <Copy className="w-4 h-4" />
@@ -407,7 +464,7 @@ export default function PostForm({
             <div className="relative">
               <Textarea
                 value={formData.first_comment}
-                onChange={(e) => setFormData(prev => ({ ...prev, first_comment: e.target.value }))}
+                onChange={(e) => setFormData((prev) => ({ ...prev, first_comment: e.target.value }))}
                 placeholder="First comment to post after publishing..."
                 className="min-h-[150px] resize-none"
                 disabled={isClient()}
@@ -418,9 +475,9 @@ export default function PostForm({
                   variant="ghost"
                   size="sm"
                   className="absolute top-2 right-2"
-                  onClick={() => copyToClipboard(formData.first_comment, 'First Comment')}
+                  onClick={() => copyToClipboard(formData.first_comment, "First Comment")}
                 >
-                  {copied === 'First Comment' ? (
+                  {copied === "First Comment" ? (
                     <Check className="w-4 h-4 text-green-600" />
                   ) : (
                     <Copy className="w-4 h-4" />
@@ -437,61 +494,49 @@ export default function PostForm({
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-sm font-medium text-slate-700">Media Assets</h3>
           {formData.asset_urls.length > 0 && !isClient() && (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={downloadAllAssets}
-            >
+            <Button type="button" variant="outline" size="sm" onClick={downloadAllAssets}>
               <Download className="w-4 h-4 mr-2" />
               Download All
             </Button>
           )}
         </div>
 
-        {/* Upload Zone */}
         {!isClient() && (
           <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-slate-200 rounded-xl hover:border-slate-300 hover:bg-slate-50 transition-colors cursor-pointer mb-4">
             <input
-  type="file"
-  multiple
-  accept="image/*,video/*"
-  className="hidden"
-  onClick={(e) => {
-    // Allows selecting the same file twice and still triggers onChange
-    e.currentTarget.value = null;
-    console.log("[UPLOAD] input clicked");
-  }}
-  onChange={(e) => {
-    console.log("[UPLOAD] onChange fired. files:", e.target.files);
-    handleFileUpload(e);
-  }}
-/>
+              type="file"
+              multiple
+              accept="image/*,video/*"
+              className="hidden"
+              onClick={(e) => {
+                e.currentTarget.value = null;
+              }}
+              onChange={handleFileUpload}
+            />
             {uploading ? (
               <Loader2 className="w-8 h-8 text-slate-400 animate-spin" />
             ) : (
               <>
                 <Upload className="w-8 h-8 text-slate-400 mb-2" />
-                <span className="text-sm text-slate-500">
-                  Click to upload images or videos
-                </span>
+                <span className="text-sm text-slate-500">Click to upload images or videos</span>
               </>
             )}
           </label>
         )}
 
-        {/* Asset Grid */}
         {formData.asset_urls.length > 0 && (
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
             {formData.asset_urls.map((url, index) => (
-              <div key={index} className="relative group aspect-square rounded-xl overflow-hidden bg-slate-100">
-                {formData.asset_types[index] === 'video' ? (
+              <div
+                key={index}
+                className="relative group aspect-square rounded-xl overflow-hidden bg-slate-100"
+              >
+                {formData.asset_types[index] === "video" ? (
                   <video src={url} className="w-full h-full object-cover" />
                 ) : (
                   <img src={url} alt="" className="w-full h-full object-cover" />
                 )}
 
-                {/* Overlay */}
                 <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
                   <Button
                     type="button"
@@ -513,9 +558,8 @@ export default function PostForm({
                   )}
                 </div>
 
-                {/* Type badge */}
                 <div className="absolute top-2 left-2">
-                  {formData.asset_types[index] === 'video' ? (
+                  {formData.asset_types[index] === "video" ? (
                     <Video className="w-5 h-5 text-white drop-shadow-lg" />
                   ) : (
                     <Image className="w-5 h-5 text-white drop-shadow-lg" />
@@ -540,21 +584,21 @@ export default function PostForm({
               </Label>
               <Textarea
                 value={formData.internal_notes}
-                onChange={(e) => setFormData(prev => ({ ...prev, internal_notes: e.target.value }))}
+                onChange={(e) => setFormData((prev) => ({ ...prev, internal_notes: e.target.value }))}
                 placeholder="Notes visible only to the team..."
                 className="mt-1.5 min-h-[100px] resize-none"
               />
             </div>
           )}
 
-          <div className={isClient() ? 'md:col-span-2' : ''}>
+          <div className={isClient() ? "md:col-span-2" : ""}>
             <Label className="flex items-center gap-2">
               <Eye className="w-4 h-4 text-slate-400" />
               Client-Facing Notes
             </Label>
             <Textarea
               value={formData.client_notes}
-              onChange={(e) => setFormData(prev => ({ ...prev, client_notes: e.target.value }))}
+              onChange={(e) => setFormData((prev) => ({ ...prev, client_notes: e.target.value }))}
               placeholder="Notes visible to the client..."
               className="mt-1.5 min-h-[100px] resize-none"
               disabled={isClient()}
@@ -579,14 +623,14 @@ export default function PostForm({
               </Button>
             )}
           </div>
-          <div className="flex items-center gap-3">
-            <Button type="submit" disabled={isLoading} className="bg-slate-900 hover:bg-slate-800">
-              {isLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-              {post ? 'Update Post' : 'Create Post'}
-            </Button>
-          </div>
+
+          <Button type="submit" disabled={isLoading} className="bg-slate-900 hover:bg-slate-800">
+            {isLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+            {post ? "Update Post" : "Create Post"}
+          </Button>
         </div>
       )}
     </form>
   );
 }
+
