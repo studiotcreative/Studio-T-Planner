@@ -20,23 +20,35 @@ import CalendarView from '@/components/calendar/CalendarView';
 
 export default function Calendar() {
   const navigate = useNavigate();
-  const { user, isAdmin, assignedAccounts } = useAuth();
+  const { user, isAdmin, isAccountManager, workspaceMemberships, assignedAccounts } = useAuth();
   const [selectedWorkspace, setSelectedWorkspace] = useState('all');
   const [selectedPlatform, setSelectedPlatform] = useState('all');
   const [selectedAccount, setSelectedAccount] = useState('all');
 
   const { data: workspaces = [] } = useQuery({
-    queryKey: ['workspaces'],
-    queryFn: async () => {
+  queryKey: ['workspaces', isAdmin(), workspaceMemberships?.map(m => m.workspace_id).join(',')],
+  enabled: isAdmin() || (Array.isArray(workspaceMemberships) && workspaceMemberships.length > 0),
+  queryFn: async () => {
+    if (isAdmin()) {
       const { data, error } = await supabase
         .from('workspaces')
         .select('*')
         .order('created_at', { ascending: false });
-
       if (error) throw error;
       return data ?? [];
     }
-  });
+
+    const ids = workspaceMemberships.map(m => m.workspace_id);
+    const { data, error } = await supabase
+      .from('workspaces')
+      .select('*')
+      .in('id', ids)
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+    return data ?? [];
+  }
+});
 
   const { data: allAccounts = [], isLoading: loadingAccounts } = useQuery({
     queryKey: ['accounts'],
@@ -148,7 +160,7 @@ export default function Calendar() {
 
       {/* Filters */}
       <div className="flex flex-wrap gap-3 mb-6">
-        {isAdmin() && (
+        {(isAdmin() || isAccountManager()) && (
           <Select value={selectedWorkspace} onValueChange={(v) => {
             setSelectedWorkspace(v);
             setSelectedAccount('all');
