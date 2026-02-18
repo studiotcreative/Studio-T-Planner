@@ -65,10 +65,12 @@ export default function ClientFeed() {
     queryKey: ["client-posts", clientWorkspaceId],
     enabled: !!clientWorkspaceId && !loading,
     queryFn: async () => {
+      // ✅ Default feed behavior: newest posts first (Instagram/TikTok style)
       const { data, error } = await supabase
         .from("posts")
         .select("*")
-        .eq("workspace_id", clientWorkspaceId);
+        .eq("workspace_id", clientWorkspaceId)
+        .order("created_at", { ascending: false });
 
       if (error) throw error;
       return data ?? [];
@@ -80,7 +82,7 @@ export default function ClientFeed() {
     return accounts.filter((a) => a.platform === selectedPlatform);
   }, [accounts, selectedPlatform]);
 
-  // Filter posts
+  // Filter posts (keep DB ordering; do NOT apply conflicting client-side sorts)
   const posts = useMemo(() => {
     let filtered = allPosts.filter(
       (p) => p.status !== "draft" && p.status !== "posted"
@@ -93,9 +95,8 @@ export default function ClientFeed() {
       filtered = filtered.filter((p) => accountIds.includes(p.social_account_id));
     }
 
-    return filtered.sort(
-      (a, b) => (a.order_index || 0) - (b.order_index || 0)
-    );
+    // ✅ Keep the DB ordering (created_at DESC) intact
+    return filtered;
   }, [allPosts, selectedAccount, filteredAccounts]);
 
   const isLoading = loading || loadingAccounts || loadingPosts;
@@ -197,3 +198,4 @@ export default function ClientFeed() {
     </div>
   );
 }
+
