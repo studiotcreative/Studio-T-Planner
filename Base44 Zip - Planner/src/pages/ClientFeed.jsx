@@ -1,3 +1,4 @@
+// src/pages/ClientFeed.jsx
 import React, { useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { createPageUrl } from "@/utils";
@@ -65,7 +66,7 @@ export default function ClientFeed() {
     queryKey: ["client-posts", clientWorkspaceId],
     enabled: !!clientWorkspaceId && !loading,
     queryFn: async () => {
-      // ✅ Default feed behavior: newest posts first (Instagram/TikTok style)
+      // ✅ Default feed behavior: newest posts first (created_at DESC)
       const { data, error } = await supabase
         .from("posts")
         .select("*")
@@ -82,7 +83,7 @@ export default function ClientFeed() {
     return accounts.filter((a) => a.platform === selectedPlatform);
   }, [accounts, selectedPlatform]);
 
-  // Filter posts (keep DB ordering; do NOT apply conflicting client-side sorts)
+  // Filter posts (Option A: manual order becomes official if any order_index exists)
   const posts = useMemo(() => {
     let filtered = allPosts.filter(
       (p) => p.status !== "draft" && p.status !== "posted"
@@ -95,7 +96,21 @@ export default function ClientFeed() {
       filtered = filtered.filter((p) => accountIds.includes(p.social_account_id));
     }
 
-    // ✅ Keep the DB ordering (created_at DESC) intact
+    // ✅ Option A:
+    // If any post has order_index set, use manual order for everyone (clients included).
+    const hasManualOrder = filtered.some(
+      (p) => p.order_index !== null && p.order_index !== undefined
+    );
+
+    if (hasManualOrder) {
+      return [...filtered].sort((a, b) => {
+        const ai = a.order_index ?? Number.MAX_SAFE_INTEGER;
+        const bi = b.order_index ?? Number.MAX_SAFE_INTEGER;
+        return ai - bi;
+      });
+    }
+
+    // ✅ Otherwise keep DB order (created_at DESC)
     return filtered;
   }, [allPosts, selectedAccount, filteredAccounts]);
 
@@ -136,7 +151,11 @@ export default function ClientFeed() {
       >
         <TabsList className="bg-white border border-slate-200">
           {Object.entries(platformConfig).map(([key, config]) => (
-            <TabsTrigger key={key} value={key} className="flex items-center gap-2">
+            <TabsTrigger
+              key={key}
+              value={key}
+              className="flex items-center gap-2"
+            >
               <PlatformIcon platform={key} size="sm" />
               <span className="hidden sm:inline">{config.label}</span>
             </TabsTrigger>
@@ -182,7 +201,9 @@ export default function ClientFeed() {
                 <h3 className="font-semibold text-lg text-slate-900">
                   @{filteredAccounts.find((a) => a.id === selectedAccount)?.handle}
                 </h3>
-                <p className="text-sm text-slate-500">{posts.length} scheduled posts</p>
+                <p className="text-sm text-slate-500">
+                  {posts.length} scheduled posts
+                </p>
               </div>
             </div>
           )}
