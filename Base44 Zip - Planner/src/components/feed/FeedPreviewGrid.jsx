@@ -16,24 +16,33 @@ export default function FeedPreviewGrid({
   platform = "instagram",
   isReadOnly = false,
 
-  // ✅ New (minimal) options for manual reorder
-  allowReorder = false, // parent should pass true only for admins/account_managers
-  showModeToggle = false, // show Auto/Manual toggle when true
-  defaultMode = "auto", // "auto" | "manual"
+  // ✅ Parent will set true only for admin/account_manager
+  allowReorder = false,
+
+  // ✅ Optional UI
+  showModeToggle = true,
 }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
-  const [mode, setMode] = useState(defaultMode); // "auto" | "manual"
+  // ✅ Option A: if any post has order_index, manual becomes "official"
+  const hasManualOrder = useMemo(() => {
+    return (posts || []).some(
+      (p) => p.order_index !== null && p.order_index !== undefined
+    );
+  }, [posts]);
+
+  // ✅ Default mode: manual if manual exists; otherwise auto
+  const [mode, setMode] = useState(hasManualOrder ? "manual" : "auto");
   const [items, setItems] = useState(posts);
 
   // Only allow reorder when:
-  // - not read-only (clients/viewers)
-  // - parent explicitly allows it (admins/account_managers)
+  // - not read-only (clients)
+  // - parent explicitly allows it (admin/account_manager)
   // - mode is manual
   const canReorderNow = !isReadOnly && allowReorder && mode === "manual";
 
-  // Keep a stable manual sort when in manual mode (nulls go to bottom)
+  // Manual sorted view (nulls go to bottom)
   const postsManualSorted = useMemo(() => {
     const copy = Array.isArray(posts) ? [...posts] : [];
     copy.sort((a, b) => {
@@ -45,14 +54,21 @@ export default function FeedPreviewGrid({
   }, [posts]);
 
   useEffect(() => {
-    // Auto mode: keep DB ordering as provided (should be created_at DESC from the parent query)
-    // Manual mode: use order_index ASC for display + drag reorder
+    // If manual order appears later (after someone saves), default to manual.
+    setMode((prev) => {
+      if (hasManualOrder) return "manual";
+      return prev; // keep whatever user selected if no manual exists
+    });
+  }, [hasManualOrder]);
+
+  useEffect(() => {
+    // Auto: keep posts as provided by parent (created_at DESC)
+    // Manual: show order_index ASC
     setItems(mode === "manual" ? postsManualSorted : posts);
   }, [posts, postsManualSorted, mode]);
 
   const updateOrderMutation = useMutation({
     mutationFn: async (orderedPosts) => {
-      // Only persist in manual mode and only when authorized
       if (!canReorderNow) return;
 
       const updates = orderedPosts.map((post, index) =>
@@ -60,12 +76,11 @@ export default function FeedPreviewGrid({
       );
 
       const results = await Promise.all(updates);
-
       const firstError = results.find((r) => r.error)?.error;
       if (firstError) throw firstError;
     },
     onSuccess: () => {
-      // Invalidate both common keys (some pages use ["posts"], others use ["client-posts", workspaceId])
+      // Refresh both common query keys
       queryClient.invalidateQueries({ queryKey: ["posts"] });
       queryClient.invalidateQueries({ queryKey: ["client-posts"] });
       toast.success("Order updated");
@@ -93,7 +108,7 @@ export default function FeedPreviewGrid({
   // Instagram/Facebook - 3 column grid
   const isGridLayout = platform === "instagram" || platform === "facebook";
 
-  if (items.length === 0) {
+  if (!items || items.length === 0) {
     return (
       <div className="text-center py-16">
         <div className="w-16 h-16 rounded-2xl bg-slate-100 flex items-center justify-center mx-auto mb-4">
@@ -106,7 +121,10 @@ export default function FeedPreviewGrid({
 
   return (
     <div className="space-y-3">
-      {/* ✅ Optional mode toggle (only for admins/account_managers when enabled by parent) */}
+      {/* Mode Toggle:
+          - Only show to users who are allowed to reorder
+          - Default behavior aligns with Option A
+      */}
       {showModeToggle && !isReadOnly && allowReorder && (
         <div className="flex items-center justify-end gap-2">
           <button
@@ -117,8 +135,12 @@ export default function FeedPreviewGrid({
                 : "bg-slate-50 border-slate-200 text-slate-600"
             }`}
             onClick={() => setMode("auto")}
-            disabled={updateOrderMutation.isPending}
-            title="Auto: newest posts first"
+            disabled={updateOrderMutation.isPending || hasManualOrder} // optional: lock auto once manual exists
+            title={
+              hasManualOrder
+                ? "Manual order is active for this feed"
+                : "Auto: newest posts first"
+            }
           >
             Auto (Newest)
           </button>
@@ -192,7 +214,6 @@ export default function FeedPreviewGrid({
                       >
                         {isGridLayout ? (
                           <>
-                            {/* Grid Item */}
                             <div className="w-full h-full bg-slate-100">
                               {post.asset_urls?.[0] ? (
                                 post.asset_types?.[0] === "video" ? (
@@ -222,14 +243,12 @@ export default function FeedPreviewGrid({
                               )}
                             </div>
 
-                            {/* Hover Overlay */}
                             <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center p-3">
                               <StatusBadge status={post.status} size="sm" />
                               <p className="text-white text-xs text-center mt-2 line-clamp-3">
                                 {post.caption || "No caption"}
                               </p>
 
-                              {/* Drag handle only in manual reorder mode */}
                               {canReorderNow && (
                                 <div
                                   {...provided.dragHandleProps}
@@ -244,7 +263,6 @@ export default function FeedPreviewGrid({
                           </>
                         ) : (
                           <>
-                            {/* Vertical List Item */}
                             {canReorderNow && (
                               <div
                                 {...provided.dragHandleProps}
