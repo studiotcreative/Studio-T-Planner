@@ -1,66 +1,66 @@
 // src/pages/FeedPreview.jsx
-import React, { useState, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { createPageUrl } from '@/utils';
-import { supabase } from '@/api/supabaseClient';
-import { useQuery } from '@tanstack/react-query';
-import { useAuth } from '@/components/auth/AuthProvider';
-import { ArrowLeft, Plus } from 'lucide-react';
+import React, { useState, useMemo } from "react";
+import { useNavigate } from "react-router-dom";
+import { createPageUrl } from "@/utils";
+import { supabase } from "@/api/supabaseClient";
+import { useQuery } from "@tanstack/react-query";
+import { useAuth } from "@/components/auth/AuthProvider";
+import { ArrowLeft, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { 
-  Select, 
-  SelectContent, 
-  SelectItem, 
-  SelectTrigger, 
-  SelectValue 
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
-import FeedPreviewGrid from '@/components/feed/FeedPreviewGrid';
-import PlatformIcon, { platformConfig } from '@/components/ui/PlatformIcon';
+import FeedPreviewGrid from "@/components/feed/FeedPreviewGrid";
+import PlatformIcon, { platformConfig } from "@/components/ui/PlatformIcon";
 
 export default function FeedPreview() {
   const navigate = useNavigate();
   const { user, isAdmin, isClient, assignedAccounts } = useAuth();
-  const [selectedWorkspace, setSelectedWorkspace] = useState('all');
-  const [selectedAccount, setSelectedAccount] = useState('all');
-  const [selectedPlatform, setSelectedPlatform] = useState('instagram');
+  const [selectedWorkspace, setSelectedWorkspace] = useState("all");
+  const [selectedAccount, setSelectedAccount] = useState("all");
+  const [selectedPlatform, setSelectedPlatform] = useState("instagram");
 
   const { data: workspaces = [] } = useQuery({
-    queryKey: ['workspaces'],
+    queryKey: ["workspaces"],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from('workspaces')
-        .select('*')
-        .order('created_at', { ascending: false });
+        .from("workspaces")
+        .select("*")
+        .order("created_at", { ascending: false });
 
       if (error) throw error;
       return data ?? [];
-    }
+    },
   });
 
   const { data: allAccounts = [], isLoading: loadingAccounts } = useQuery({
-    queryKey: ['accounts'],
+    queryKey: ["accounts"],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('social_accounts')
-        .select('*');
+      const { data, error } = await supabase.from("social_accounts").select("*");
 
       if (error) throw error;
       return data ?? [];
-    }
+    },
   });
 
   const { data: allPosts = [], isLoading: loadingPosts } = useQuery({
-    queryKey: ['posts'],
+    queryKey: ["posts"],
     queryFn: async () => {
+      // ✅ Default feed behavior: newest posts first (created_at DESC)
       const { data, error } = await supabase
-        .from('posts')
-        .select('*');
+        .from("posts")
+        .select("*")
+        .order("created_at", { ascending: false });
 
       if (error) throw error;
       return data ?? [];
-    }
+    },
   });
 
   // Filter accounts based on role (preserving your logic)
@@ -78,9 +78,10 @@ export default function FeedPreview() {
     }
 
     // Fallback to legacy fields
-    return allAccounts.filter(acc =>
-      acc.assigned_manager_email === user?.email ||
-      acc.collaborator_emails?.includes(user?.email)
+    return allAccounts.filter(
+      (acc) =>
+        acc.assigned_manager_email === user?.email ||
+        acc.collaborator_emails?.includes(user?.email)
     );
   }, [allAccounts, isAdmin, isClient, user, assignedAccounts]);
 
@@ -88,28 +89,29 @@ export default function FeedPreview() {
   const filteredAccounts = useMemo(() => {
     let accs = accounts;
 
-    if (selectedWorkspace !== 'all') {
-      accs = accs.filter(a => a.workspace_id === selectedWorkspace);
+    if (selectedWorkspace !== "all") {
+      accs = accs.filter((a) => a.workspace_id === selectedWorkspace);
     }
 
-    accs = accs.filter(a => a.platform === selectedPlatform);
+    accs = accs.filter((a) => a.platform === selectedPlatform);
 
     return accs;
   }, [accounts, selectedWorkspace, selectedPlatform]);
 
-  // Filter posts
+  // Filter posts (keep DB ordering; do NOT apply conflicting client-side sorts)
   const posts = useMemo(() => {
-    // Keep your exact behavior: hide posted, sort by order_index
-    let filtered = allPosts.filter(p => p.status !== 'posted');
+    // Keep your exact behavior: hide posted (but do NOT force order_index sorting)
+    let filtered = allPosts.filter((p) => p.status !== "posted");
 
-    if (selectedAccount !== 'all') {
-      filtered = filtered.filter(p => p.social_account_id === selectedAccount);
+    if (selectedAccount !== "all") {
+      filtered = filtered.filter((p) => p.social_account_id === selectedAccount);
     } else {
-      const accountIds = filteredAccounts.map(a => a.id);
-      filtered = filtered.filter(p => accountIds.includes(p.social_account_id));
+      const accountIds = filteredAccounts.map((a) => a.id);
+      filtered = filtered.filter((p) => accountIds.includes(p.social_account_id));
     }
 
-    return filtered.sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
+    // ✅ Keep DB ordering (created_at DESC) intact
+    return filtered;
   }, [allPosts, selectedAccount, filteredAccounts]);
 
   const isLoading = loadingAccounts || loadingPosts;
@@ -119,11 +121,7 @@ export default function FeedPreview() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
         <div className="flex items-center gap-4">
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => navigate(-1)}
-          >
+          <Button variant="ghost" size="icon" onClick={() => navigate(-1)}>
             <ArrowLeft className="w-5 h-5" />
           </Button>
           <div>
@@ -137,7 +135,7 @@ export default function FeedPreview() {
         {!isClient() && (
           <Button
             className="bg-slate-900 hover:bg-slate-800"
-            onClick={() => navigate(createPageUrl('PostEditor'))}
+            onClick={() => navigate(createPageUrl("PostEditor"))}
           >
             <Plus className="w-4 h-4 mr-2" />
             New Post
@@ -150,13 +148,17 @@ export default function FeedPreview() {
         value={selectedPlatform}
         onValueChange={(v) => {
           setSelectedPlatform(v);
-          setSelectedAccount('all');
+          setSelectedAccount("all");
         }}
         className="mb-6"
       >
         <TabsList className="bg-white border border-slate-200">
           {Object.entries(platformConfig).map(([key, config]) => (
-            <TabsTrigger key={key} value={key} className="flex items-center gap-2">
+            <TabsTrigger
+              key={key}
+              value={key}
+              className="flex items-center gap-2"
+            >
               <PlatformIcon platform={key} size="sm" />
               <span className="hidden sm:inline">{config.label}</span>
             </TabsTrigger>
@@ -171,7 +173,7 @@ export default function FeedPreview() {
             value={selectedWorkspace}
             onValueChange={(v) => {
               setSelectedWorkspace(v);
-              setSelectedAccount('all');
+              setSelectedAccount("all");
             }}
           >
             <SelectTrigger className="w-[180px] bg-white">
@@ -179,8 +181,10 @@ export default function FeedPreview() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Workspaces</SelectItem>
-              {workspaces.map(w => (
-                <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>
+              {workspaces.map((w) => (
+                <SelectItem key={w.id} value={w.id}>
+                  {w.name}
+                </SelectItem>
               ))}
             </SelectContent>
           </Select>
@@ -191,8 +195,10 @@ export default function FeedPreview() {
             <SelectValue placeholder="All Accounts" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All Accounts ({filteredAccounts.length})</SelectItem>
-            {filteredAccounts.map(a => (
+            <SelectItem value="all">
+              All Accounts ({filteredAccounts.length})
+            </SelectItem>
+            {filteredAccounts.map((a) => (
               <SelectItem key={a.id} value={a.id}>
                 @{a.handle}
               </SelectItem>
@@ -211,18 +217,16 @@ export default function FeedPreview() {
       ) : (
         <div className="bg-slate-50 rounded-2xl p-4 sm:p-6">
           {/* Account Header */}
-          {selectedAccount !== 'all' && (
+          {selectedAccount !== "all" && (
             <div className="flex items-center gap-3 mb-6 pb-4 border-b border-slate-200">
               <div className="w-16 h-16 rounded-full bg-gradient-to-br from-violet-500 to-indigo-500 flex items-center justify-center">
                 <PlatformIcon platform={selectedPlatform} size="lg" />
               </div>
               <div>
                 <h3 className="font-semibold text-lg text-slate-900">
-                  @{filteredAccounts.find(a => a.id === selectedAccount)?.handle}
+                  @{filteredAccounts.find((a) => a.id === selectedAccount)?.handle}
                 </h3>
-                <p className="text-sm text-slate-500">
-                  {posts.length} scheduled posts
-                </p>
+                <p className="text-sm text-slate-500">{posts.length} scheduled posts</p>
               </div>
             </div>
           )}
@@ -238,3 +242,4 @@ export default function FeedPreview() {
     </div>
   );
 }
+
