@@ -1,5 +1,5 @@
 // src/components/posts/PostForm.jsx
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { supabase } from "@/api/supabaseClient";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/components/auth/AuthProvider";
@@ -36,6 +36,47 @@ import PlatformIcon from "@/components/ui/PlatformIcon";
 
 const STORAGE_BUCKET = "post-assets"; // confirm matches your Supabase Storage bucket
 
+// --------------------------
+// Draft persistence (minimal + safe)
+// --------------------------
+const DRAFT_VERSION = 1;
+
+function getDraftKey({ userId, workspaceId }) {
+  return `postDraft:v${DRAFT_VERSION}:${userId}:${workspaceId || "no-workspace"}:new`;
+}
+
+function safeParse(json) {
+  try {
+    return JSON.parse(json);
+  } catch {
+    return null;
+  }
+}
+
+function safeGetItem(key) {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function safeSetItem(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // ignore storage errors (Safari private mode / quota)
+  }
+}
+
+function safeRemoveItem(key) {
+  try {
+    localStorage.removeItem(key);
+  } catch {
+    // ignore
+  }
+}
+
 export default function PostForm({ post, onSave, onDelete, initialDate, isLoading }) {
   const { user, isAdmin, isClient, assignedAccounts } = useAuth();
 
@@ -57,6 +98,9 @@ export default function PostForm({ post, onSave, onDelete, initialDate, isLoadin
 
   const [uploading, setUploading] = useState(false);
   const [copied, setCopied] = useState(null);
+
+  const userId = user?.id;
+  const didRestoreDraftRef = useRef(false);
 
   // --------------------------
   // Queries
@@ -99,7 +143,7 @@ export default function PostForm({ post, onSave, onDelete, initialDate, isLoadin
   }, [allAccounts, isAdmin, user, assignedAccounts]);
 
   // --------------------------
-  // Filter accounts by selected workspace (this is the key improvement)
+  // Filter accounts by selected workspace
   // --------------------------
   const accountsForSelectedWorkspace = useMemo(() => {
     const wsId = formData.workspace_id;
@@ -108,7 +152,7 @@ export default function PostForm({ post, onSave, onDelete, initialDate, isLoadin
   }, [accounts, formData.workspace_id]);
 
   // --------------------------
-  // Initialize form with post data
+  // Initialize form with post data (EDIT vs NEW)
   // --------------------------
   useEffect(() => {
     if (post) {
@@ -136,7 +180,35 @@ export default function PostForm({ post, onSave, onDelete, initialDate, isLoadin
     }
   }, [post, initialDate]);
 
+  // --------------------------
+  // NEW POST ONLY: Restore draft once on mount
+  // --------------------------
+  useEffect(() => {
+    if (post) return; // drafts only for new posts
+    if (!userId) return;
+    if (didRestoreDraftRef.current) return;
+
+    const key = getDraftKey({ userId, workspaceId: formData.workspace_id });
+    const raw = safeGetItem(key);
+    const draft = safeParse(raw);
+
+    if (draft?.formData) {
+      setFormData((prev) => ({
+        ...prev,
+        ...draft.formData,
+        // never let a missing draft date wipe your initialDate
+        scheduled_date:
+          draft.formData.scheduled_date ?? (initialDate || prev.scheduled_date || ""),
+      }));
+    }
+
+    didRestoreDraftRef.current = true;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId, post]);
+
+  // --------------------------
   // If workspace changes and selected account doesn't belong, clear it
+  // --------------------------
   useEffect(() => {
     if (!formData.workspace_id) return;
     if (!formData.social_account_id) return;
@@ -154,13 +226,45 @@ export default function PostForm({ post, onSave, onDelete, initialDate, isLoadin
   }, [formData.workspace_id, formData.social_account_id, accounts]);
 
   // --------------------------
+  // NEW POST ONLY: Autosave draft (debounced)
+  // --------------------------
+  useEffect(() => {
+    if (post) return;
+    if (!userId) return;
+
+    const key = getDraftKey({ userId, workspaceId: formData.workspace_id });
+    const t = setTimeout(() => {
+      safeSetItem(key, JSON.stringify({ savedAt: Date.now(), formData }));
+    }, 800);
+
+    return () => clearTimeout(t);
+  }, [userId, post, formData]);
+
+  // --------------------------
+  // NEW POST ONLY: Force-save when leaving the tab/window (mobile safe)
+  // --------------------------
+  useEffect(() => {
+    if (post) return;
+    if (!userId) return;
+
+    const onVis = () => {
+      if (document.visibilityState !== "hidden") return;
+      const key = getDraftKey({ userId, workspaceId: formData.workspace_id });
+      safeSetItem(key, JSON.stringify({ savedAt: Date.now(), formData }));
+    };
+
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, [userId, post, formData]);
+
+  // --------------------------
   // Handlers
   // --------------------------
   const handleWorkspaceChange = (workspaceId) => {
     setFormData((prev) => ({
       ...prev,
       workspace_id: workspaceId,
-      // DO NOT force-clear account here; the useEffect above clears only if mismatched
+      // do not force-clear account here; mismatch effect handles it
     }));
   };
 
@@ -228,8 +332,9 @@ export default function PostForm({ post, onSave, onDelete, initialDate, isLoadin
 
       toast.success(`${files.length} file(s) uploaded`);
     } catch (error) {
+      // show real error (helps when it’s 413 / payload too large)
       console.error(error);
-      toast.error("Failed to upload files (check bucket name + Storage permissions)");
+      toast.error(error?.message || "Failed to upload files.");
     } finally {
       setUploading(false);
       e.target.value = "";
@@ -265,7 +370,14 @@ export default function PostForm({ post, onSave, onDelete, initialDate, isLoadin
     toast.success("Downloading all assets...");
   };
 
-  const handleSubmit = (e) => {
+  const clearDraftIfNewPost = () => {
+    if (post) return;
+    if (!userId) return;
+    const key = getDraftKey({ userId, workspaceId: formData.workspace_id });
+    safeRemoveItem(key);
+  };
+
+  const handleSubmit = async (e) => {
     e.preventDefault();
 
     if (!formData.workspace_id) {
@@ -279,8 +391,18 @@ export default function PostForm({ post, onSave, onDelete, initialDate, isLoadin
     }
 
     // Keep PostEditor as status authority (don’t send status fields)
+    // (safe even if these aren’t in formData)
     const { status, approval_status, approved_by, approved_at, ...safeData } = formData;
-    onSave(safeData);
+
+    try {
+      // allow onSave to be async; if it isn't, Promise.resolve handles it
+      await Promise.resolve(onSave(safeData));
+      // Only clear draft after a successful create/save
+      clearDraftIfNewPost();
+    } catch (err) {
+      console.error(err);
+      toast.error(err?.message || "Failed to save post.");
+    }
   };
 
   const selectedAccount = accounts.find((a) => a.id === formData.social_account_id);
@@ -464,7 +586,9 @@ export default function PostForm({ post, onSave, onDelete, initialDate, isLoadin
             <div className="relative">
               <Textarea
                 value={formData.first_comment}
-                onChange={(e) => setFormData((prev) => ({ ...prev, first_comment: e.target.value }))}
+                onChange={(e) =>
+                  setFormData((prev) => ({ ...prev, first_comment: e.target.value }))
+                }
                 placeholder="First comment to post after publishing..."
                 className="min-h-[150px] resize-none"
                 disabled={isClient()}
@@ -633,4 +757,5 @@ export default function PostForm({ post, onSave, onDelete, initialDate, isLoadin
     </form>
   );
 }
+
 
