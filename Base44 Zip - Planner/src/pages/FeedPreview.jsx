@@ -98,9 +98,9 @@ export default function FeedPreview() {
     return accs;
   }, [accounts, selectedWorkspace, selectedPlatform]);
 
-  // Filter posts (keep DB ordering; do NOT apply conflicting client-side sorts)
+  // Filter posts (Option A: manual order becomes official if any order_index exists)
   const posts = useMemo(() => {
-    // Keep your exact behavior: hide posted (but do NOT force order_index sorting)
+    // Keep your exact behavior: hide posted
     let filtered = allPosts.filter((p) => p.status !== "posted");
 
     if (selectedAccount !== "all") {
@@ -110,7 +110,21 @@ export default function FeedPreview() {
       filtered = filtered.filter((p) => accountIds.includes(p.social_account_id));
     }
 
-    // ✅ Keep DB ordering (created_at DESC) intact
+    // ✅ Option A:
+    // If any post has order_index set, use manual order for everyone.
+    const hasManualOrder = filtered.some(
+      (p) => p.order_index !== null && p.order_index !== undefined
+    );
+
+    if (hasManualOrder) {
+      return [...filtered].sort((a, b) => {
+        const ai = a.order_index ?? Number.MAX_SAFE_INTEGER;
+        const bi = b.order_index ?? Number.MAX_SAFE_INTEGER;
+        return ai - bi;
+      });
+    }
+
+    // ✅ Otherwise keep DB order (created_at DESC)
     return filtered;
   }, [allPosts, selectedAccount, filteredAccounts]);
 
@@ -154,11 +168,7 @@ export default function FeedPreview() {
       >
         <TabsList className="bg-white border border-slate-200">
           {Object.entries(platformConfig).map(([key, config]) => (
-            <TabsTrigger
-              key={key}
-              value={key}
-              className="flex items-center gap-2"
-            >
+            <TabsTrigger key={key} value={key} className="flex items-center gap-2">
               <PlatformIcon platform={key} size="sm" />
               <span className="hidden sm:inline">{config.label}</span>
             </TabsTrigger>
@@ -236,10 +246,14 @@ export default function FeedPreview() {
             accounts={accounts}
             platform={selectedPlatform}
             isReadOnly={isClient()}
+            // ✅ We'll wire these next once we confirm how to detect account_manager
+            // allowReorder={isAdmin() || isAccountManager()}
+            // showModeToggle={true}
           />
         </div>
       )}
     </div>
   );
 }
+
 
