@@ -61,14 +61,13 @@ export default function PostEditor() {
         .select("*")
         .eq("id", postId)
         .single();
-
       if (error) throw error;
       return data;
     },
   });
 
   // ----------------------------
-  // Accounts + Workspaces (used for header display + validation)
+  // Accounts + Workspaces
   // ----------------------------
   const { data: accounts = [] } = useQuery({
     queryKey: ["accounts"],
@@ -100,7 +99,6 @@ export default function PostEditor() {
         .insert(payload)
         .select("*")
         .single();
-
       if (error) throw error;
       return created;
     },
@@ -153,12 +151,10 @@ export default function PostEditor() {
   const statusMutation = useMutation({
     mutationFn: async (nextStatus) => {
       if (!postId) throw new Error("Missing post id");
-
       const { data, error } = await supabase.rpc("rpc_set_post_status", {
         p_post_id: postId,
         p_next_status: nextStatus,
       });
-
       if (error) throw error;
       return data;
     },
@@ -288,7 +284,6 @@ export default function PostEditor() {
     toast.success("Downloading assets...");
   };
 
-  // Header context (edit mode)
   const headerAccount = accounts.find((a) => a.id === post?.social_account_id);
   const headerWorkspace = workspaces.find((w) => w.id === post?.workspace_id);
 
@@ -331,7 +326,6 @@ export default function PostEditor() {
           <div className="flex items-center gap-3">
             <StatusBadge status={post.status} />
 
-            {/* Team status control (clients read-only) */}
             {!isClientFn() && (
               <Select
                 value={post.status ?? "draft"}
