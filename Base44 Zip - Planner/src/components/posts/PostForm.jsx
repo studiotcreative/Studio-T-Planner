@@ -1,5 +1,5 @@
 // src/components/posts/PostForm.jsx
-import React, { useState, useEffect, useMemo, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { supabase } from "@/api/supabaseClient";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/components/auth/AuthProvider";
@@ -39,9 +39,9 @@ const STORAGE_BUCKET = "post-assets";
 // --------------------------
 // Draft persistence (minimal + safe)
 // --------------------------
-const DRAFT_VERSION = 2;
+const DRAFT_VERSION = 3;
 
-// ✅ Stable key for "new post" drafts (does NOT depend on workspace_id)
+// ✅ Stable key (NOT workspace-dependent)
 function getDraftKey({ userId }) {
   return `postDraft:v${DRAFT_VERSION}:${userId}:new`;
 }
@@ -53,7 +53,6 @@ function safeParse(json) {
     return null;
   }
 }
-
 function safeGetItem(key) {
   try {
     return localStorage.getItem(key);
@@ -61,15 +60,13 @@ function safeGetItem(key) {
     return null;
   }
 }
-
 function safeSetItem(key, value) {
   try {
     localStorage.setItem(key, value);
   } catch {
-    // ignore
+    // ignore (Safari private mode / quota)
   }
 }
-
 function safeRemoveItem(key) {
   try {
     localStorage.removeItem(key);
@@ -78,13 +75,7 @@ function safeRemoveItem(key) {
   }
 }
 
-export default function PostForm({
-  post,
-  onSave,
-  onDelete,
-  initialDate,
-  isLoading,
-}) {
+export default function PostForm({ post, onSave, onDelete, initialDate, isLoading }) {
   const { user, isAdmin, isClient, assignedAccounts } = useAuth();
 
   const [formData, setFormData] = useState({
@@ -107,7 +98,18 @@ export default function PostForm({
   const [copied, setCopied] = useState(null);
 
   const userId = user?.id;
+
+  // ✅ Prevent restore running twice
   const didRestoreDraftRef = useRef(false);
+
+  // ✅ Always save the latest formData (avoid stale closures)
+  const formDataRef = useRef(formData);
+  useEffect(() => {
+    formDataRef.current = formData;
+  }, [formData]);
+
+  // ✅ Distinguish internal navigation (unmount) vs page background/unload
+  const isPageUnloadRef = useRef(false);
 
   // --------------------------
   // Queries
@@ -185,15 +187,34 @@ export default function PostForm({
   }, [post, initialDate]);
 
   // --------------------------
-  // NEW POST ONLY: Restore draft once (on mount)
+  // Draft helpers
+  // --------------------------
+  const draftKey = useMemo(() => {
+    if (!userId) return null;
+    return getDraftKey({ userId });
+  }, [userId]);
+
+  const saveDraftNow = useCallback(() => {
+    if (post) return;
+    if (!draftKey) return;
+    safeSetItem(draftKey, JSON.stringify({ savedAt: Date.now(), formData: formDataRef.current }));
+  }, [post, draftKey]);
+
+  const clearDraftNow = useCallback(() => {
+    if (post) return;
+    if (!draftKey) return;
+    safeRemoveItem(draftKey);
+  }, [post, draftKey]);
+
+  // --------------------------
+  // NEW POST ONLY: Restore draft once when userId exists
   // --------------------------
   useEffect(() => {
     if (post) return;
-    if (!userId) return;
+    if (!draftKey) return;
     if (didRestoreDraftRef.current) return;
 
-    const key = getDraftKey({ userId });
-    const raw = safeGetItem(key);
+    const raw = safeGetItem(draftKey);
     const draft = safeParse(raw);
 
     if (draft?.formData) {
@@ -201,14 +222,12 @@ export default function PostForm({
         ...prev,
         ...draft.formData,
         scheduled_date:
-          draft.formData.scheduled_date ??
-          (initialDate || prev.scheduled_date || ""),
+          draft.formData.scheduled_date ?? (initialDate || prev.scheduled_date || ""),
       }));
     }
 
     didRestoreDraftRef.current = true;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userId, post]);
+  }, [post, draftKey, initialDate]);
 
   // --------------------------
   // If workspace changes and selected account doesn't belong, clear it
@@ -230,71 +249,70 @@ export default function PostForm({
   }, [formData.workspace_id, formData.social_account_id, accounts]);
 
   // --------------------------
-  // NEW POST ONLY: Save draft helper (stable)
-  // --------------------------
-  const saveDraftNow = useMemo(() => {
-    if (post) return null;
-    if (!userId) return null;
-
-    const key = getDraftKey({ userId });
-
-    return () => {
-      safeSetItem(key, JSON.stringify({ savedAt: Date.now(), formData }));
-    };
-  }, [userId, post, formData]);
-
-  // --------------------------
-  // NEW POST ONLY: Autosave (debounced)
+  // NEW POST ONLY: Autosave draft (debounced)
   // --------------------------
   useEffect(() => {
-    if (!saveDraftNow) return;
+    if (post) return;
+    if (!draftKey) return;
 
     const t = setTimeout(() => {
       saveDraftNow();
     }, 600);
 
     return () => clearTimeout(t);
-  }, [saveDraftNow]);
+  }, [post, draftKey, saveDraftNow, formData]);
 
   // --------------------------
-  // NEW POST ONLY: Save when switching apps/tabs or when page is being hidden
-  // (keeps draft when you leave the browser temporarily)
+  // NEW POST ONLY: Save draft on app switching / tab background / OS multitask
   // --------------------------
   useEffect(() => {
-    if (!saveDraftNow) return;
+    if (post) return;
+    if (!draftKey) return;
 
     const onVis = () => {
       if (document.visibilityState !== "hidden") return;
+      isPageUnloadRef.current = true;
       saveDraftNow();
     };
 
     const onPageHide = () => {
+      isPageUnloadRef.current = true;
+      saveDraftNow();
+    };
+
+    const onBeforeUnload = () => {
+      isPageUnloadRef.current = true;
       saveDraftNow();
     };
 
     document.addEventListener("visibilitychange", onVis);
     window.addEventListener("pagehide", onPageHide);
+    window.addEventListener("beforeunload", onBeforeUnload);
 
     return () => {
       document.removeEventListener("visibilitychange", onVis);
       window.removeEventListener("pagehide", onPageHide);
+      window.removeEventListener("beforeunload", onBeforeUnload);
     };
-  }, [saveDraftNow]);
+  }, [post, draftKey, saveDraftNow]);
 
   // --------------------------
-  // NEW POST ONLY: Discard draft when leaving PostEditor route (internal navigation)
-  // This matches your requirement: draft should NOT persist if you leave the app screen without saving.
+  // NEW POST ONLY: Clear draft ONLY on internal app navigation away
+  // (i.e., component unmount NOT triggered by pagehide/background)
   // --------------------------
   useEffect(() => {
     if (post) return;
-    if (!userId) return;
-
-    const key = getDraftKey({ userId });
+    if (!draftKey) return;
 
     return () => {
-      safeRemoveItem(key);
+      // If unmount was caused by switching apps / tab background / bfcache,
+      // keep the draft so it restores when you come back.
+      if (isPageUnloadRef.current) return;
+
+      // Otherwise it's internal navigation → discard unsaved draft
+      clearDraftNow();
     };
-  }, [post, userId]);
+  }, [post, draftKey, clearDraftNow]);
 
   // --------------------------
   // Handlers
@@ -344,23 +362,15 @@ export default function PostForm({
 
       const uploaded = [];
       for (const file of files) {
-        const path = buildStoragePath({
-          workspaceId,
-          accountId,
-          filename: file.name,
-        });
+        const path = buildStoragePath({ workspaceId, accountId, filename: file.name });
 
-        const { error: upErr } = await supabase.storage
-          .from(STORAGE_BUCKET)
-          .upload(path, file, {
-            cacheControl: "3600",
-            upsert: false,
-          });
+        const { error: upErr } = await supabase.storage.from(STORAGE_BUCKET).upload(path, file, {
+          cacheControl: "3600",
+          upsert: false,
+        });
         if (upErr) throw upErr;
 
-        const { data: pub } = supabase.storage
-          .from(STORAGE_BUCKET)
-          .getPublicUrl(path);
+        const { data: pub } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(path);
         const url = pub?.publicUrl;
         if (!url) throw new Error("Failed to generate public URL for upload.");
 
@@ -415,13 +425,6 @@ export default function PostForm({
     toast.success("Downloading all assets...");
   };
 
-  const clearDraftIfNewPost = () => {
-    if (post) return;
-    if (!userId) return;
-    const key = getDraftKey({ userId });
-    safeRemoveItem(key);
-  };
-
   const handleSubmit = async (e) => {
     e.preventDefault();
 
@@ -435,12 +438,13 @@ export default function PostForm({
       return;
     }
 
-    const { status, approval_status, approved_by, approved_at, ...safeData } =
-      formData;
+    // Keep PostEditor as status authority
+    const { status, approval_status, approved_by, approved_at, ...safeData } = formData;
 
     try {
       await Promise.resolve(onSave(safeData));
-      clearDraftIfNewPost(); // ✅ only clear after successful save
+      // ✅ If save succeeds, clear local draft
+      clearDraftNow();
     } catch (err) {
       console.error(err);
       toast.error(err?.message || "Failed to save post.");
@@ -457,9 +461,7 @@ export default function PostForm({
     <form onSubmit={handleSubmit} className="space-y-6">
       {/* Account & Schedule */}
       <div className="bg-white rounded-xl border border-slate-200/60 p-6">
-        <h3 className="text-sm font-medium text-slate-700 mb-4">
-          Account & Schedule
-        </h3>
+        <h3 className="text-sm font-medium text-slate-700 mb-4">Account & Schedule</h3>
 
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div>
@@ -513,10 +515,7 @@ export default function PostForm({
                 type="date"
                 value={formData.scheduled_date || ""}
                 onChange={(e) =>
-                  setFormData((prev) => ({
-                    ...prev,
-                    scheduled_date: e.target.value,
-                  }))
+                  setFormData((prev) => ({ ...prev, scheduled_date: e.target.value }))
                 }
                 className="pl-10"
                 disabled={isClient()}
@@ -532,10 +531,7 @@ export default function PostForm({
                 type="time"
                 value={formData.scheduled_time || ""}
                 onChange={(e) =>
-                  setFormData((prev) => ({
-                    ...prev,
-                    scheduled_time: e.target.value,
-                  }))
+                  setFormData((prev) => ({ ...prev, scheduled_time: e.target.value }))
                 }
                 className="pl-10"
                 disabled={isClient()}
@@ -599,9 +595,7 @@ export default function PostForm({
                 </Button>
               )}
             </div>
-            <p className="text-xs text-slate-400 mt-2">
-              {formData.caption.length} characters
-            </p>
+            <p className="text-xs text-slate-400 mt-2">{formData.caption.length} characters</p>
           </TabsContent>
 
           <TabsContent value="hashtags">
@@ -641,10 +635,7 @@ export default function PostForm({
               <Textarea
                 value={formData.first_comment}
                 onChange={(e) =>
-                  setFormData((prev) => ({
-                    ...prev,
-                    first_comment: e.target.value,
-                  }))
+                  setFormData((prev) => ({ ...prev, first_comment: e.target.value }))
                 }
                 placeholder="First comment to post after publishing..."
                 className="min-h-[150px] resize-none"
@@ -656,9 +647,7 @@ export default function PostForm({
                   variant="ghost"
                   size="sm"
                   className="absolute top-2 right-2"
-                  onClick={() =>
-                    copyToClipboard(formData.first_comment, "First Comment")
-                  }
+                  onClick={() => copyToClipboard(formData.first_comment, "First Comment")}
                 >
                   {copied === "First Comment" ? (
                     <Check className="w-4 h-4 text-green-600" />
@@ -677,12 +666,7 @@ export default function PostForm({
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-sm font-medium text-slate-700">Media Assets</h3>
           {formData.asset_urls.length > 0 && !isClient() && (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={downloadAllAssets}
-            >
+            <Button type="button" variant="outline" size="sm" onClick={downloadAllAssets}>
               <Download className="w-4 h-4 mr-2" />
               Download All
             </Button>
@@ -706,9 +690,7 @@ export default function PostForm({
             ) : (
               <>
                 <Upload className="w-8 h-8 text-slate-400 mb-2" />
-                <span className="text-sm text-slate-500">
-                  Click to upload images or videos
-                </span>
+                <span className="text-sm text-slate-500">Click to upload images or videos</span>
               </>
             )}
           </label>
@@ -775,10 +757,7 @@ export default function PostForm({
               <Textarea
                 value={formData.internal_notes}
                 onChange={(e) =>
-                  setFormData((prev) => ({
-                    ...prev,
-                    internal_notes: e.target.value,
-                  }))
+                  setFormData((prev) => ({ ...prev, internal_notes: e.target.value }))
                 }
                 placeholder="Notes visible only to the team..."
                 className="mt-1.5 min-h-[100px] resize-none"
@@ -794,10 +773,7 @@ export default function PostForm({
             <Textarea
               value={formData.client_notes}
               onChange={(e) =>
-                setFormData((prev) => ({
-                  ...prev,
-                  client_notes: e.target.value,
-                }))
+                setFormData((prev) => ({ ...prev, client_notes: e.target.value }))
               }
               placeholder="Notes visible to the client..."
               className="mt-1.5 min-h-[100px] resize-none"
@@ -824,11 +800,7 @@ export default function PostForm({
             )}
           </div>
 
-          <Button
-            type="submit"
-            disabled={isLoading}
-            className="bg-slate-900 hover:bg-slate-800"
-          >
+          <Button type="submit" disabled={isLoading} className="bg-slate-900 hover:bg-slate-800">
             {isLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
             {post ? "Update Post" : "Create Post"}
           </Button>
