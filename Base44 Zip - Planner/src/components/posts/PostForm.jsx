@@ -262,15 +262,19 @@ export default function PostForm({ post, onSave, onDelete, initialDate, isLoadin
   }, [saveDraftNow]);
 
   // --------------------------
-  // NEW POST ONLY: Force-save when leaving tab/window (mobile safe)
-  // --------------------------
-  useEffect(() => {
-    if (!saveDraftNow) return;
+  // NEW POST ONLY: Clear draft when leaving the New Post screen (internal app navigation)
+// This matches your requirement: if you never saved and you leave PostEditor, it's OK to discard.
+useEffect(() => {
+  if (post) return;
+  if (!userId) return;
 
-    const onVis = () => {
-      if (document.visibilityState !== "hidden") return;
-      saveDraftNow();
-    };
+  const key = getDraftKey({ userId });
+
+  return () => {
+    // On route change away from PostEditor, discard unsaved draft
+    safeRemoveItem(key);
+  };
+}, [post, userId]);
 
     const onPageHide = () => saveDraftNow();
 
