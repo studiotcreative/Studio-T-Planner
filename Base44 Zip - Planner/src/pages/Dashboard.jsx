@@ -6,9 +6,9 @@ import { supabase } from '@/api/supabaseClient';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/components/auth/AuthProvider';
 import { format, isToday, isTomorrow, parseISO, startOfWeek, endOfWeek } from 'date-fns';
-import { 
-  Calendar, 
-  Plus, 
+import {
+  Calendar,
+  Plus,
   ArrowRight,
   Clock,
   CheckCircle2,
@@ -16,12 +16,12 @@ import {
 } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { 
-  Select, 
-  SelectContent, 
-  SelectItem, 
-  SelectTrigger, 
-  SelectValue 
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import StatusBadge from '@/components/ui/StatusBadge';
@@ -39,7 +39,6 @@ export default function Dashboard() {
         .from('workspaces')
         .select('*')
         .order('created_at', { ascending: false });
-
       if (error) throw error;
       return data ?? [];
     }
@@ -51,7 +50,6 @@ export default function Dashboard() {
       const { data, error } = await supabase
         .from('social_accounts')
         .select('*');
-
       if (error) throw error;
       return data ?? [];
     }
@@ -64,29 +62,24 @@ export default function Dashboard() {
         .from('posts')
         .select('*')
         .order('scheduled_date', { ascending: false });
-
       if (error) throw error;
       return data ?? [];
     }
   });
 
-  // Filter accounts based on role (keeping your existing logic)
   const accounts = useMemo(() => {
     if (isAdmin()) return allAccounts;
 
-    // Prefer assignedAccounts from auth if it exists (future-proof)
     if (Array.isArray(assignedAccounts) && assignedAccounts.length > 0) {
       return assignedAccounts;
     }
 
-    // Fallback to your old Base44-style account assignment fields
     return allAccounts.filter(acc =>
       acc.assigned_manager_email === user?.email ||
       acc.collaborator_emails?.includes(user?.email)
     );
   }, [allAccounts, isAdmin, user, assignedAccounts]);
 
-  // Filter posts based on accessible accounts
   const posts = useMemo(() => {
     const accountIds = accounts.map(a => a.id);
     let filtered = allPosts.filter(p => accountIds.includes(p.social_account_id));
@@ -101,7 +94,6 @@ export default function Dashboard() {
     return filtered;
   }, [allPosts, accounts, selectedWorkspace, selectedPlatform]);
 
-  // Stats
   const stats = useMemo(() => {
     const now = new Date();
     const weekStart = startOfWeek(now);
@@ -120,7 +112,6 @@ export default function Dashboard() {
     };
   }, [posts]);
 
-  // Upcoming posts (next 7 days)
   const upcomingPosts = useMemo(() => {
     const now = new Date();
     return posts
@@ -129,7 +120,6 @@ export default function Dashboard() {
       .slice(0, 8);
   }, [posts]);
 
-  // Posts needing attention
   const needsAttention = useMemo(() => {
     return posts
       .filter(p => p.status === 'sent_to_client' || p.status === 'internal_review')
@@ -150,43 +140,52 @@ export default function Dashboard() {
   const isLoading = loadingWorkspaces || loadingAccounts || loadingPosts;
 
   return (
-    <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    // ✅ Let Layout handle max width/padding; prevent horizontal spill
+    <div className="w-full overflow-x-hidden py-6 sm:py-8">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
+      <div className="flex flex-col gap-4 mb-6 sm:mb-8">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Dashboard</h1>
           <p className="text-slate-500 mt-1">
             Welcome back, {user?.full_name?.split(' ')[0]}
           </p>
         </div>
-        <div className="flex items-center gap-3">
-          {isAdmin() && (
-            <Select value={selectedWorkspace} onValueChange={setSelectedWorkspace}>
-              <SelectTrigger className="w-[180px] bg-white">
-                <SelectValue placeholder="All Workspaces" />
+
+        {/* ✅ Mobile: stack controls. Desktop: inline */}
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3 w-full">
+          {/* Filters */}
+          <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
+            {isAdmin() && (
+              <Select value={selectedWorkspace} onValueChange={setSelectedWorkspace}>
+                <SelectTrigger className="w-full sm:w-[180px] bg-white">
+                  <SelectValue placeholder="All Workspaces" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Workspaces</SelectItem>
+                  {workspaces.map(w => (
+                    <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+
+            <Select value={selectedPlatform} onValueChange={setSelectedPlatform}>
+              <SelectTrigger className="w-full sm:w-[160px] bg-white">
+                <SelectValue placeholder="All Platforms" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Workspaces</SelectItem>
-                {workspaces.map(w => (
-                  <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>
-                ))}
+                <SelectItem value="all">All Platforms</SelectItem>
+                <SelectItem value="instagram">Instagram</SelectItem>
+                <SelectItem value="tiktok">TikTok</SelectItem>
+                <SelectItem value="facebook">Facebook</SelectItem>
+                <SelectItem value="youtube_shorts">YouTube Shorts</SelectItem>
               </SelectContent>
             </Select>
-          )}
-          <Select value={selectedPlatform} onValueChange={setSelectedPlatform}>
-            <SelectTrigger className="w-[160px] bg-white">
-              <SelectValue placeholder="All Platforms" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Platforms</SelectItem>
-              <SelectItem value="instagram">Instagram</SelectItem>
-              <SelectItem value="tiktok">TikTok</SelectItem>
-              <SelectItem value="facebook">Facebook</SelectItem>
-              <SelectItem value="youtube_shorts">YouTube Shorts</SelectItem>
-            </SelectContent>
-          </Select>
-          <Link to={createPageUrl('PostEditor')}>
-            <Button className="bg-slate-900 hover:bg-slate-800">
+          </div>
+
+          {/* New Post */}
+          <Link to={createPageUrl('PostEditor')} className="w-full sm:w-auto sm:ml-auto">
+            <Button className="w-full sm:w-auto bg-slate-900 hover:bg-slate-800">
               <Plus className="w-4 h-4 mr-2" />
               New Post
             </Button>
@@ -198,8 +197,8 @@ export default function Dashboard() {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         <Card className="bg-white border-slate-200/60">
           <CardContent className="p-5">
-            <div className="flex items-center justify-between">
-              <div>
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
                 <p className="text-sm text-slate-500 font-medium">This Week</p>
                 {isLoading ? (
                   <Skeleton className="h-8 w-16 mt-1" />
@@ -207,7 +206,7 @@ export default function Dashboard() {
                   <p className="text-3xl font-bold text-slate-900 mt-1">{stats.thisWeek}</p>
                 )}
               </div>
-              <div className="w-12 h-12 rounded-xl bg-violet-100 flex items-center justify-center">
+              <div className="w-12 h-12 rounded-xl bg-violet-100 flex items-center justify-center shrink-0">
                 <Calendar className="w-6 h-6 text-violet-600" />
               </div>
             </div>
@@ -216,8 +215,8 @@ export default function Dashboard() {
 
         <Card className="bg-white border-slate-200/60">
           <CardContent className="p-5">
-            <div className="flex items-center justify-between">
-              <div>
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
                 <p className="text-sm text-slate-500 font-medium">Drafts</p>
                 {isLoading ? (
                   <Skeleton className="h-8 w-16 mt-1" />
@@ -225,7 +224,7 @@ export default function Dashboard() {
                   <p className="text-3xl font-bold text-slate-900 mt-1">{stats.draft}</p>
                 )}
               </div>
-              <div className="w-12 h-12 rounded-xl bg-slate-100 flex items-center justify-center">
+              <div className="w-12 h-12 rounded-xl bg-slate-100 flex items-center justify-center shrink-0">
                 <Clock className="w-6 h-6 text-slate-600" />
               </div>
             </div>
@@ -234,8 +233,8 @@ export default function Dashboard() {
 
         <Card className="bg-white border-slate-200/60">
           <CardContent className="p-5">
-            <div className="flex items-center justify-between">
-              <div>
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
                 <p className="text-sm text-slate-500 font-medium">Awaiting Approval</p>
                 {isLoading ? (
                   <Skeleton className="h-8 w-16 mt-1" />
@@ -243,7 +242,7 @@ export default function Dashboard() {
                   <p className="text-3xl font-bold text-amber-600 mt-1">{stats.awaitingApproval}</p>
                 )}
               </div>
-              <div className="w-12 h-12 rounded-xl bg-amber-100 flex items-center justify-center">
+              <div className="w-12 h-12 rounded-xl bg-amber-100 flex items-center justify-center shrink-0">
                 <AlertCircle className="w-6 h-6 text-amber-600" />
               </div>
             </div>
@@ -252,8 +251,8 @@ export default function Dashboard() {
 
         <Card className="bg-white border-slate-200/60">
           <CardContent className="p-5">
-            <div className="flex items-center justify-between">
-              <div>
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
                 <p className="text-sm text-slate-500 font-medium">Ready to Post</p>
                 {isLoading ? (
                   <Skeleton className="h-8 w-16 mt-1" />
@@ -261,7 +260,7 @@ export default function Dashboard() {
                   <p className="text-3xl font-bold text-emerald-600 mt-1">{stats.approved}</p>
                 )}
               </div>
-              <div className="w-12 h-12 rounded-xl bg-emerald-100 flex items-center justify-center">
+              <div className="w-12 h-12 rounded-xl bg-emerald-100 flex items-center justify-center shrink-0">
                 <CheckCircle2 className="w-6 h-6 text-emerald-600" />
               </div>
             </div>
@@ -269,7 +268,8 @@ export default function Dashboard() {
         </Card>
       </div>
 
-      <div className="grid lg:grid-cols-3 gap-6">
+      {/* ✅ Mobile stacks into 1 column, desktop stays 2/1 */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Upcoming Posts */}
         <div className="lg:col-span-2">
           <Card className="bg-white border-slate-200/60">
@@ -305,18 +305,19 @@ export default function Dashboard() {
                   {upcomingPosts.map(post => {
                     const account = getAccountById(post.social_account_id);
                     const workspace = getWorkspaceById(post.workspace_id);
+
                     return (
-                      <Link 
-                        key={post.id} 
+                      <Link
+                        key={post.id}
                         to={createPageUrl(`PostEditor?id=${post.id}`)}
-                        className="flex items-center gap-4 p-4 rounded-xl bg-slate-50 hover:bg-slate-100 transition-colors group"
+                        className="flex items-start sm:items-center gap-4 p-4 rounded-xl bg-slate-50 hover:bg-slate-100 transition-colors group"
                       >
                         {/* Thumbnail */}
-                        <div className="w-14 h-14 rounded-lg bg-slate-200 flex-shrink-0 overflow-hidden">
+                        <div className="w-14 h-14 rounded-lg bg-slate-200 shrink-0 overflow-hidden">
                           {post.asset_urls?.[0] ? (
-                            <img 
-                              src={post.asset_urls[0]} 
-                              alt="" 
+                            <img
+                              src={post.asset_urls[0]}
+                              alt=""
                               className="w-full h-full object-cover"
                             />
                           ) : (
@@ -325,28 +326,30 @@ export default function Dashboard() {
                             </div>
                           )}
                         </div>
-                        
+
                         {/* Content */}
                         <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 mb-1">
+                          <div className="flex items-center gap-2 mb-1 min-w-0">
                             <PlatformIcon platform={post.platform} size="sm" />
-                            <span className="text-sm font-medium text-slate-900">
+                            <span className="text-sm font-medium text-slate-900 truncate">
                               @{account?.handle || 'Unknown'}
                             </span>
                             {isAdmin() && workspace && (
-                              <span className="text-xs text-slate-400 px-2 py-0.5 bg-slate-200/60 rounded-full">
+                              <span className="hidden sm:inline text-xs text-slate-400 px-2 py-0.5 bg-slate-200/60 rounded-full truncate">
                                 {workspace.name}
                               </span>
                             )}
                           </div>
-                          <p className="text-sm text-slate-600 truncate">
+
+                          {/* ✅ Prevent long caption/URL strings from forcing horizontal scroll */}
+                          <p className="text-sm text-slate-600 truncate sm:truncate">
                             {post.caption || 'No caption yet'}
                           </p>
                         </div>
 
                         {/* Date & Status */}
-                        <div className="flex flex-col items-end gap-2">
-                          <span className="text-sm font-medium text-slate-700">
+                        <div className="shrink-0 flex flex-col items-end gap-2">
+                          <span className="text-sm font-medium text-slate-700 whitespace-nowrap">
                             {formatScheduledDate(post.scheduled_date)}
                             {post.scheduled_time && (
                               <span className="text-slate-400 ml-1">{post.scheduled_time}</span>
@@ -363,8 +366,9 @@ export default function Dashboard() {
           </Card>
         </div>
 
-        {/* Needs Attention */}
-        <div>
+        {/* Right column */}
+        <div className="space-y-6">
+          {/* Needs Attention */}
           <Card className="bg-white border-slate-200/60">
             <CardHeader className="pb-4">
               <CardTitle className="text-lg font-semibold flex items-center gap-2">
@@ -389,12 +393,12 @@ export default function Dashboard() {
                   {needsAttention.map(post => {
                     const account = getAccountById(post.social_account_id);
                     return (
-                      <Link 
+                      <Link
                         key={post.id}
                         to={createPageUrl(`PostEditor?id=${post.id}`)}
                         className="block p-3 rounded-lg border border-slate-200 hover:border-slate-300 transition-colors"
                       >
-                        <div className="flex items-center gap-2 mb-2">
+                        <div className="flex items-center gap-2 mb-2 min-w-0">
                           <PlatformIcon platform={post.platform} size="sm" />
                           <span className="text-sm font-medium text-slate-700 truncate">
                             @{account?.handle}
@@ -409,8 +413,8 @@ export default function Dashboard() {
             </CardContent>
           </Card>
 
-          {/* Quick Stats by Account */}
-          <Card className="bg-white border-slate-200/60 mt-6">
+          {/* Your Accounts */}
+          <Card className="bg-white border-slate-200/60">
             <CardHeader className="pb-4">
               <CardTitle className="text-lg font-semibold">Your Accounts</CardTitle>
             </CardHeader>
@@ -434,17 +438,17 @@ export default function Dashboard() {
                     ).length;
 
                     return (
-                      <div 
+                      <div
                         key={account.id}
-                        className="flex items-center justify-between p-3 rounded-lg bg-slate-50"
+                        className="flex items-center justify-between gap-3 p-3 rounded-lg bg-slate-50 min-w-0"
                       >
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
                           <PlatformIcon platform={account.platform} showBg size="sm" />
-                          <span className="text-sm font-medium text-slate-700">
+                          <span className="text-sm font-medium text-slate-700 truncate">
                             @{account.handle}
                           </span>
                         </div>
-                        <span className="text-sm text-slate-500">
+                        <span className="text-sm text-slate-500 whitespace-nowrap">
                           {pendingCount} pending
                         </span>
                       </div>
@@ -459,3 +463,4 @@ export default function Dashboard() {
     </div>
   );
 }
+
