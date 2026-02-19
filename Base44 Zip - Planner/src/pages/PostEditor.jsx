@@ -69,8 +69,6 @@ export default function PostEditor() {
 
   // ----------------------------
   // Accounts + Workspaces (used for header display + validation)
-  // NOTE: This does NOT change UI dropdowns inside PostForm yet.
-  // We'll fix the actual dropdown in PostForm next.
   // ----------------------------
   const { data: accounts = [] } = useQuery({
     queryKey: ["accounts"],
@@ -184,9 +182,6 @@ export default function PostEditor() {
       return;
     }
 
-    // ✅ SAFETY FIX:
-    // If a social account is selected, force workspace_id to match that account.
-    // And block save if mismatch.
     const selectedAccountId = formData?.social_account_id || null;
     const selectedWorkspaceId = formData?.workspace_id || null;
 
@@ -201,13 +196,11 @@ export default function PostEditor() {
       return;
     }
 
-    // If the form has a workspace selected and it doesn't match the account, block save.
     if (selectedWorkspaceId && acct.workspace_id && selectedWorkspaceId !== acct.workspace_id) {
       toast.error("Workspace and social account do not match. Please re-select.");
       return;
     }
 
-    // Force correct workspace_id from the selected account (source of truth)
     const payload = {
       ...formData,
       workspace_id: acct.workspace_id,
@@ -266,7 +259,13 @@ export default function PostEditor() {
 
   const copyAll = async () => {
     if (!post) return;
-    const text = [post.caption, "", post.hashtags, "", post.first_comment ? `First Comment: ${post.first_comment}` : ""]
+    const text = [
+      post.caption,
+      "",
+      post.hashtags,
+      "",
+      post.first_comment ? `First Comment: ${post.first_comment}` : "",
+    ]
       .filter(Boolean)
       .join("\n");
 
@@ -320,7 +319,9 @@ export default function PostEditor() {
               <div className="flex items-center gap-2 mt-1">
                 <PlatformIcon platform={post.platform} size="sm" />
                 <span className="text-slate-500">@{headerAccount.handle}</span>
-                {headerWorkspace && <span className="text-slate-400">• {headerWorkspace.name}</span>}
+                {headerWorkspace && (
+                  <span className="text-slate-400">• {headerWorkspace.name}</span>
+                )}
               </div>
             )}
           </div>
@@ -350,7 +351,6 @@ export default function PostEditor() {
               </Select>
             )}
 
-            {/* Actions only when READY_TO_POST */}
             {!isClientFn() && post.status === "ready_to_post" && (
               <>
                 <Button variant="outline" onClick={copyAll}>
@@ -404,9 +404,17 @@ export default function PostEditor() {
               <h3 className="text-sm font-medium text-slate-700 mb-4">Preview</h3>
               <div className="aspect-square rounded-lg overflow-hidden bg-slate-100">
                 {post.asset_types?.[0] === "video" ? (
-                  <video src={post.asset_urls[0]} controls className="w-full h-full object-cover" />
+                  <video
+                    src={post.asset_urls[0]}
+                    controls
+                    className="w-full h-full object-cover"
+                  />
                 ) : (
-                  <img src={post.asset_urls[0]} alt="" className="w-full h-full object-cover" />
+                  <img
+                    src={post.asset_urls[0]}
+                    alt=""
+                    className="w-full h-full object-cover"
+                  />
                 )}
               </div>
             </div>
@@ -418,6 +426,4 @@ export default function PostEditor() {
     </div>
   );
 }
-
-
 
