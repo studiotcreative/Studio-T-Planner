@@ -41,9 +41,7 @@ const STORAGE_BUCKET = "post-assets";
 // --------------------------
 const DRAFT_VERSION = 2;
 
-// ✅ KEY FIX: draft key must be stable while creating a new post.
-// Previously it depended on workspace_id, which is often empty at first,
-// so restore was reading a different key than the one used to save.
+// ✅ Stable key for "new post" drafts (does NOT depend on workspace_id)
 function getDraftKey({ userId }) {
   return `postDraft:v${DRAFT_VERSION}:${userId}:new`;
 }
@@ -80,7 +78,13 @@ function safeRemoveItem(key) {
   }
 }
 
-export default function PostForm({ post, onSave, onDelete, initialDate, isLoading }) {
+export default function PostForm({
+  post,
+  onSave,
+  onDelete,
+  initialDate,
+  isLoading,
+}) {
   const { user, isAdmin, isClient, assignedAccounts } = useAuth();
 
   const [formData, setFormData] = useState({
@@ -181,7 +185,7 @@ export default function PostForm({ post, onSave, onDelete, initialDate, isLoadin
   }, [post, initialDate]);
 
   // --------------------------
-  // NEW POST ONLY: Restore draft once on mount
+  // NEW POST ONLY: Restore draft once (on mount)
   // --------------------------
   useEffect(() => {
     if (post) return;
@@ -196,9 +200,9 @@ export default function PostForm({ post, onSave, onDelete, initialDate, isLoadin
       setFormData((prev) => ({
         ...prev,
         ...draft.formData,
-        // never let restore wipe initialDate if draft missing it
         scheduled_date:
-          draft.formData.scheduled_date ?? (initialDate || prev.scheduled_date || ""),
+          draft.formData.scheduled_date ??
+          (initialDate || prev.scheduled_date || ""),
       }));
     }
 
@@ -226,19 +230,21 @@ export default function PostForm({ post, onSave, onDelete, initialDate, isLoadin
   }, [formData.workspace_id, formData.social_account_id, accounts]);
 
   // --------------------------
-  // NEW POST ONLY: Save draft helper (reused in multiple places)
+  // NEW POST ONLY: Save draft helper (stable)
   // --------------------------
   const saveDraftNow = useMemo(() => {
     if (post) return null;
     if (!userId) return null;
+
     const key = getDraftKey({ userId });
+
     return () => {
       safeSetItem(key, JSON.stringify({ savedAt: Date.now(), formData }));
     };
   }, [userId, post, formData]);
 
   // --------------------------
-  // NEW POST ONLY: Autosave draft (debounced)
+  // NEW POST ONLY: Autosave (debounced)
   // --------------------------
   useEffect(() => {
     if (!saveDraftNow) return;
@@ -251,32 +257,20 @@ export default function PostForm({ post, onSave, onDelete, initialDate, isLoadin
   }, [saveDraftNow]);
 
   // --------------------------
-  // NEW POST ONLY: Force-save on unmount (route navigation)
-  // This fixes: "I went to another window/page and came back, and it reset"
+  // NEW POST ONLY: Save when switching apps/tabs or when page is being hidden
+  // (keeps draft when you leave the browser temporarily)
   // --------------------------
   useEffect(() => {
     if (!saveDraftNow) return;
-    return () => {
+
+    const onVis = () => {
+      if (document.visibilityState !== "hidden") return;
       saveDraftNow();
     };
-  }, [saveDraftNow]);
 
-  // --------------------------
-  // NEW POST ONLY: Clear draft when leaving the New Post screen (internal app navigation)
-// This matches your requirement: if you never saved and you leave PostEditor, it's OK to discard.
-useEffect(() => {
-  if (post) return;
-  if (!userId) return;
-
-  const key = getDraftKey({ userId });
-
-  return () => {
-    // On route change away from PostEditor, discard unsaved draft
-    safeRemoveItem(key);
-  };
-}, [post, userId]);
-
-    const onPageHide = () => saveDraftNow();
+    const onPageHide = () => {
+      saveDraftNow();
+    };
 
     document.addEventListener("visibilitychange", onVis);
     window.addEventListener("pagehide", onPageHide);
@@ -286,6 +280,21 @@ useEffect(() => {
       window.removeEventListener("pagehide", onPageHide);
     };
   }, [saveDraftNow]);
+
+  // --------------------------
+  // NEW POST ONLY: Discard draft when leaving PostEditor route (internal navigation)
+  // This matches your requirement: draft should NOT persist if you leave the app screen without saving.
+  // --------------------------
+  useEffect(() => {
+    if (post) return;
+    if (!userId) return;
+
+    const key = getDraftKey({ userId });
+
+    return () => {
+      safeRemoveItem(key);
+    };
+  }, [post, userId]);
 
   // --------------------------
   // Handlers
@@ -335,15 +344,23 @@ useEffect(() => {
 
       const uploaded = [];
       for (const file of files) {
-        const path = buildStoragePath({ workspaceId, accountId, filename: file.name });
-
-        const { error: upErr } = await supabase.storage.from(STORAGE_BUCKET).upload(path, file, {
-          cacheControl: "3600",
-          upsert: false,
+        const path = buildStoragePath({
+          workspaceId,
+          accountId,
+          filename: file.name,
         });
+
+        const { error: upErr } = await supabase.storage
+          .from(STORAGE_BUCKET)
+          .upload(path, file, {
+            cacheControl: "3600",
+            upsert: false,
+          });
         if (upErr) throw upErr;
 
-        const { data: pub } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(path);
+        const { data: pub } = supabase.storage
+          .from(STORAGE_BUCKET)
+          .getPublicUrl(path);
         const url = pub?.publicUrl;
         if (!url) throw new Error("Failed to generate public URL for upload.");
 
@@ -418,7 +435,8 @@ useEffect(() => {
       return;
     }
 
-    const { status, approval_status, approved_by, approved_at, ...safeData } = formData;
+    const { status, approval_status, approved_by, approved_at, ...safeData } =
+      formData;
 
     try {
       await Promise.resolve(onSave(safeData));
@@ -432,11 +450,16 @@ useEffect(() => {
   const selectedAccount = accounts.find((a) => a.id === formData.social_account_id);
   const selectedWorkspace = workspaces.find((w) => w.id === formData.workspace_id);
 
+  // --------------------------
+  // UI
+  // --------------------------
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
       {/* Account & Schedule */}
       <div className="bg-white rounded-xl border border-slate-200/60 p-6">
-        <h3 className="text-sm font-medium text-slate-700 mb-4">Account & Schedule</h3>
+        <h3 className="text-sm font-medium text-slate-700 mb-4">
+          Account & Schedule
+        </h3>
 
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div>
@@ -490,7 +513,10 @@ useEffect(() => {
                 type="date"
                 value={formData.scheduled_date || ""}
                 onChange={(e) =>
-                  setFormData((prev) => ({ ...prev, scheduled_date: e.target.value }))
+                  setFormData((prev) => ({
+                    ...prev,
+                    scheduled_date: e.target.value,
+                  }))
                 }
                 className="pl-10"
                 disabled={isClient()}
@@ -506,7 +532,10 @@ useEffect(() => {
                 type="time"
                 value={formData.scheduled_time || ""}
                 onChange={(e) =>
-                  setFormData((prev) => ({ ...prev, scheduled_time: e.target.value }))
+                  setFormData((prev) => ({
+                    ...prev,
+                    scheduled_time: e.target.value,
+                  }))
                 }
                 className="pl-10"
                 disabled={isClient()}
@@ -570,7 +599,9 @@ useEffect(() => {
                 </Button>
               )}
             </div>
-            <p className="text-xs text-slate-400 mt-2">{formData.caption.length} characters</p>
+            <p className="text-xs text-slate-400 mt-2">
+              {formData.caption.length} characters
+            </p>
           </TabsContent>
 
           <TabsContent value="hashtags">
@@ -610,7 +641,10 @@ useEffect(() => {
               <Textarea
                 value={formData.first_comment}
                 onChange={(e) =>
-                  setFormData((prev) => ({ ...prev, first_comment: e.target.value }))
+                  setFormData((prev) => ({
+                    ...prev,
+                    first_comment: e.target.value,
+                  }))
                 }
                 placeholder="First comment to post after publishing..."
                 className="min-h-[150px] resize-none"
@@ -622,7 +656,9 @@ useEffect(() => {
                   variant="ghost"
                   size="sm"
                   className="absolute top-2 right-2"
-                  onClick={() => copyToClipboard(formData.first_comment, "First Comment")}
+                  onClick={() =>
+                    copyToClipboard(formData.first_comment, "First Comment")
+                  }
                 >
                   {copied === "First Comment" ? (
                     <Check className="w-4 h-4 text-green-600" />
@@ -641,7 +677,12 @@ useEffect(() => {
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-sm font-medium text-slate-700">Media Assets</h3>
           {formData.asset_urls.length > 0 && !isClient() && (
-            <Button type="button" variant="outline" size="sm" onClick={downloadAllAssets}>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={downloadAllAssets}
+            >
               <Download className="w-4 h-4 mr-2" />
               Download All
             </Button>
@@ -665,7 +706,9 @@ useEffect(() => {
             ) : (
               <>
                 <Upload className="w-8 h-8 text-slate-400 mb-2" />
-                <span className="text-sm text-slate-500">Click to upload images or videos</span>
+                <span className="text-sm text-slate-500">
+                  Click to upload images or videos
+                </span>
               </>
             )}
           </label>
@@ -732,7 +775,10 @@ useEffect(() => {
               <Textarea
                 value={formData.internal_notes}
                 onChange={(e) =>
-                  setFormData((prev) => ({ ...prev, internal_notes: e.target.value }))
+                  setFormData((prev) => ({
+                    ...prev,
+                    internal_notes: e.target.value,
+                  }))
                 }
                 placeholder="Notes visible only to the team..."
                 className="mt-1.5 min-h-[100px] resize-none"
@@ -748,7 +794,10 @@ useEffect(() => {
             <Textarea
               value={formData.client_notes}
               onChange={(e) =>
-                setFormData((prev) => ({ ...prev, client_notes: e.target.value }))
+                setFormData((prev) => ({
+                  ...prev,
+                  client_notes: e.target.value,
+                }))
               }
               placeholder="Notes visible to the client..."
               className="mt-1.5 min-h-[100px] resize-none"
@@ -775,7 +824,11 @@ useEffect(() => {
             )}
           </div>
 
-          <Button type="submit" disabled={isLoading} className="bg-slate-900 hover:bg-slate-800">
+          <Button
+            type="submit"
+            disabled={isLoading}
+            className="bg-slate-900 hover:bg-slate-800"
+          >
             {isLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
             {post ? "Update Post" : "Create Post"}
           </Button>
