@@ -34,15 +34,18 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import PlatformIcon from "@/components/ui/PlatformIcon";
 
-const STORAGE_BUCKET = "post-assets"; // confirm matches your Supabase Storage bucket
+const STORAGE_BUCKET = "post-assets";
 
 // --------------------------
 // Draft persistence (minimal + safe)
 // --------------------------
-const DRAFT_VERSION = 1;
+const DRAFT_VERSION = 2;
 
-function getDraftKey({ userId, workspaceId }) {
-  return `postDraft:v${DRAFT_VERSION}:${userId}:${workspaceId || "no-workspace"}:new`;
+// ✅ KEY FIX: draft key must be stable while creating a new post.
+// Previously it depended on workspace_id, which is often empty at first,
+// so restore was reading a different key than the one used to save.
+function getDraftKey({ userId }) {
+  return `postDraft:v${DRAFT_VERSION}:${userId}:new`;
 }
 
 function safeParse(json) {
@@ -65,7 +68,7 @@ function safeSetItem(key, value) {
   try {
     localStorage.setItem(key, value);
   } catch {
-    // ignore storage errors (Safari private mode / quota)
+    // ignore
   }
 }
 
@@ -129,12 +132,10 @@ export default function PostForm({ post, onSave, onDelete, initialDate, isLoadin
   const accounts = useMemo(() => {
     if (isAdmin()) return allAccounts;
 
-    // Prefer auth-provided accounts if present
     if (Array.isArray(assignedAccounts) && assignedAccounts.length > 0) {
       return assignedAccounts;
     }
 
-    // Legacy fallback
     return allAccounts.filter(
       (acc) =>
         acc.assigned_manager_email === user?.email ||
@@ -172,7 +173,6 @@ export default function PostForm({ post, onSave, onDelete, initialDate, isLoadin
         order_index: post.order_index || 0,
       });
     } else {
-      // New post: keep initialDate
       setFormData((prev) => ({
         ...prev,
         scheduled_date: initialDate || prev.scheduled_date || "",
@@ -184,11 +184,11 @@ export default function PostForm({ post, onSave, onDelete, initialDate, isLoadin
   // NEW POST ONLY: Restore draft once on mount
   // --------------------------
   useEffect(() => {
-    if (post) return; // drafts only for new posts
+    if (post) return;
     if (!userId) return;
     if (didRestoreDraftRef.current) return;
 
-    const key = getDraftKey({ userId, workspaceId: formData.workspace_id });
+    const key = getDraftKey({ userId });
     const raw = safeGetItem(key);
     const draft = safeParse(raw);
 
@@ -196,7 +196,7 @@ export default function PostForm({ post, onSave, onDelete, initialDate, isLoadin
       setFormData((prev) => ({
         ...prev,
         ...draft.formData,
-        // never let a missing draft date wipe your initialDate
+        // never let restore wipe initialDate if draft missing it
         scheduled_date:
           draft.formData.scheduled_date ?? (initialDate || prev.scheduled_date || ""),
       }));
@@ -226,36 +226,62 @@ export default function PostForm({ post, onSave, onDelete, initialDate, isLoadin
   }, [formData.workspace_id, formData.social_account_id, accounts]);
 
   // --------------------------
+  // NEW POST ONLY: Save draft helper (reused in multiple places)
+  // --------------------------
+  const saveDraftNow = useMemo(() => {
+    if (post) return null;
+    if (!userId) return null;
+    const key = getDraftKey({ userId });
+    return () => {
+      safeSetItem(key, JSON.stringify({ savedAt: Date.now(), formData }));
+    };
+  }, [userId, post, formData]);
+
+  // --------------------------
   // NEW POST ONLY: Autosave draft (debounced)
   // --------------------------
   useEffect(() => {
-    if (post) return;
-    if (!userId) return;
+    if (!saveDraftNow) return;
 
-    const key = getDraftKey({ userId, workspaceId: formData.workspace_id });
     const t = setTimeout(() => {
-      safeSetItem(key, JSON.stringify({ savedAt: Date.now(), formData }));
-    }, 800);
+      saveDraftNow();
+    }, 600);
 
     return () => clearTimeout(t);
-  }, [userId, post, formData]);
+  }, [saveDraftNow]);
 
   // --------------------------
-  // NEW POST ONLY: Force-save when leaving the tab/window (mobile safe)
+  // NEW POST ONLY: Force-save on unmount (route navigation)
+  // This fixes: "I went to another window/page and came back, and it reset"
   // --------------------------
   useEffect(() => {
-    if (post) return;
-    if (!userId) return;
+    if (!saveDraftNow) return;
+    return () => {
+      saveDraftNow();
+    };
+  }, [saveDraftNow]);
+
+  // --------------------------
+  // NEW POST ONLY: Force-save when leaving tab/window (mobile safe)
+  // --------------------------
+  useEffect(() => {
+    if (!saveDraftNow) return;
 
     const onVis = () => {
       if (document.visibilityState !== "hidden") return;
-      const key = getDraftKey({ userId, workspaceId: formData.workspace_id });
-      safeSetItem(key, JSON.stringify({ savedAt: Date.now(), formData }));
+      saveDraftNow();
     };
 
+    const onPageHide = () => saveDraftNow();
+
     document.addEventListener("visibilitychange", onVis);
-    return () => document.removeEventListener("visibilitychange", onVis);
-  }, [userId, post, formData]);
+    window.addEventListener("pagehide", onPageHide);
+
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("pagehide", onPageHide);
+    };
+  }, [saveDraftNow]);
 
   // --------------------------
   // Handlers
@@ -264,7 +290,6 @@ export default function PostForm({ post, onSave, onDelete, initialDate, isLoadin
     setFormData((prev) => ({
       ...prev,
       workspace_id: workspaceId,
-      // do not force-clear account here; mismatch effect handles it
     }));
   };
 
@@ -332,7 +357,6 @@ export default function PostForm({ post, onSave, onDelete, initialDate, isLoadin
 
       toast.success(`${files.length} file(s) uploaded`);
     } catch (error) {
-      // show real error (helps when it’s 413 / payload too large)
       console.error(error);
       toast.error(error?.message || "Failed to upload files.");
     } finally {
@@ -373,7 +397,7 @@ export default function PostForm({ post, onSave, onDelete, initialDate, isLoadin
   const clearDraftIfNewPost = () => {
     if (post) return;
     if (!userId) return;
-    const key = getDraftKey({ userId, workspaceId: formData.workspace_id });
+    const key = getDraftKey({ userId });
     safeRemoveItem(key);
   };
 
@@ -390,15 +414,11 @@ export default function PostForm({ post, onSave, onDelete, initialDate, isLoadin
       return;
     }
 
-    // Keep PostEditor as status authority (don’t send status fields)
-    // (safe even if these aren’t in formData)
     const { status, approval_status, approved_by, approved_at, ...safeData } = formData;
 
     try {
-      // allow onSave to be async; if it isn't, Promise.resolve handles it
       await Promise.resolve(onSave(safeData));
-      // Only clear draft after a successful create/save
-      clearDraftIfNewPost();
+      clearDraftIfNewPost(); // ✅ only clear after successful save
     } catch (err) {
       console.error(err);
       toast.error(err?.message || "Failed to save post.");
@@ -408,18 +428,13 @@ export default function PostForm({ post, onSave, onDelete, initialDate, isLoadin
   const selectedAccount = accounts.find((a) => a.id === formData.social_account_id);
   const selectedWorkspace = workspaces.find((w) => w.id === formData.workspace_id);
 
-  // --------------------------
-  // UI
-  // --------------------------
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
       {/* Account & Schedule */}
       <div className="bg-white rounded-xl border border-slate-200/60 p-6">
         <h3 className="text-sm font-medium text-slate-700 mb-4">Account & Schedule</h3>
 
-        {/* ONE ROW on desktop: Workspace | Social Account | Day | Time */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          {/* Workspace */}
           <div>
             <Label>Workspace</Label>
             <Select
@@ -440,7 +455,6 @@ export default function PostForm({ post, onSave, onDelete, initialDate, isLoadin
             </Select>
           </div>
 
-          {/* Social Account (filtered by workspace) */}
           <div>
             <Label>Social Account</Label>
             <Select
@@ -464,7 +478,6 @@ export default function PostForm({ post, onSave, onDelete, initialDate, isLoadin
             </Select>
           </div>
 
-          {/* Scheduled Day */}
           <div>
             <Label>Scheduled Day</Label>
             <div className="relative mt-1.5">
@@ -472,14 +485,15 @@ export default function PostForm({ post, onSave, onDelete, initialDate, isLoadin
               <Input
                 type="date"
                 value={formData.scheduled_date || ""}
-                onChange={(e) => setFormData((prev) => ({ ...prev, scheduled_date: e.target.value }))}
+                onChange={(e) =>
+                  setFormData((prev) => ({ ...prev, scheduled_date: e.target.value }))
+                }
                 className="pl-10"
                 disabled={isClient()}
               />
             </div>
           </div>
 
-          {/* Scheduled Time */}
           <div>
             <Label>Scheduled Time</Label>
             <div className="relative mt-1.5">
@@ -487,7 +501,9 @@ export default function PostForm({ post, onSave, onDelete, initialDate, isLoadin
               <Input
                 type="time"
                 value={formData.scheduled_time || ""}
-                onChange={(e) => setFormData((prev) => ({ ...prev, scheduled_time: e.target.value }))}
+                onChange={(e) =>
+                  setFormData((prev) => ({ ...prev, scheduled_time: e.target.value }))
+                }
                 className="pl-10"
                 disabled={isClient()}
               />
@@ -495,7 +511,6 @@ export default function PostForm({ post, onSave, onDelete, initialDate, isLoadin
           </div>
         </div>
 
-        {/* Small context line */}
         {(selectedWorkspace || selectedAccount) && (
           <div className="mt-4 flex flex-wrap items-center gap-2 text-sm text-slate-500">
             {selectedWorkspace && (
@@ -528,7 +543,9 @@ export default function PostForm({ post, onSave, onDelete, initialDate, isLoadin
             <div className="relative">
               <Textarea
                 value={formData.caption}
-                onChange={(e) => setFormData((prev) => ({ ...prev, caption: e.target.value }))}
+                onChange={(e) =>
+                  setFormData((prev) => ({ ...prev, caption: e.target.value }))
+                }
                 placeholder="Write your caption..."
                 className="min-h-[200px] resize-none"
                 disabled={isClient()}
@@ -559,7 +576,9 @@ export default function PostForm({ post, onSave, onDelete, initialDate, isLoadin
               </div>
               <Textarea
                 value={formData.hashtags}
-                onChange={(e) => setFormData((prev) => ({ ...prev, hashtags: e.target.value }))}
+                onChange={(e) =>
+                  setFormData((prev) => ({ ...prev, hashtags: e.target.value }))
+                }
                 placeholder="#hashtag1 #hashtag2 #hashtag3"
                 className="min-h-[150px] pl-10 resize-none"
                 disabled={isClient()}
@@ -708,7 +727,9 @@ export default function PostForm({ post, onSave, onDelete, initialDate, isLoadin
               </Label>
               <Textarea
                 value={formData.internal_notes}
-                onChange={(e) => setFormData((prev) => ({ ...prev, internal_notes: e.target.value }))}
+                onChange={(e) =>
+                  setFormData((prev) => ({ ...prev, internal_notes: e.target.value }))
+                }
                 placeholder="Notes visible only to the team..."
                 className="mt-1.5 min-h-[100px] resize-none"
               />
@@ -722,7 +743,9 @@ export default function PostForm({ post, onSave, onDelete, initialDate, isLoadin
             </Label>
             <Textarea
               value={formData.client_notes}
-              onChange={(e) => setFormData((prev) => ({ ...prev, client_notes: e.target.value }))}
+              onChange={(e) =>
+                setFormData((prev) => ({ ...prev, client_notes: e.target.value }))
+              }
               placeholder="Notes visible to the client..."
               className="mt-1.5 min-h-[100px] resize-none"
               disabled={isClient()}
@@ -757,5 +780,4 @@ export default function PostForm({ post, onSave, onDelete, initialDate, isLoadin
     </form>
   );
 }
-
 
