@@ -126,7 +126,7 @@ export default function PostEditor() {
   },
   onSuccess: (updatedPost) => {
     queryClient.invalidateQueries({ queryKey: ["posts"] });
-    queryClient.setQueryData(["post", postId], updatedPost); // immediate UI consistency
+    queryClient.setQueryData(["post", postId], updatedPost);
     toast.success("Post updated");
   },
   onError: (e) => {
