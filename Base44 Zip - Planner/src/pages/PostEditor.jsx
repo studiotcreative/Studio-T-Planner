@@ -114,21 +114,26 @@ export default function PostEditor() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: async (payload) => {
-      const { error } = await supabase.from("posts").update(payload).eq("id", postId);
-      if (error) throw error;
-      return true;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["posts"] });
-      queryClient.invalidateQueries({ queryKey: ["post", postId] });
-      toast.success("Post updated");
-    },
-    onError: (e) => {
-      console.error(e);
-      toast.error(e?.message || "Failed to update post");
-    },
-  });
+  mutationFn: async (payload) => {
+    const { data, error } = await supabase
+      .from("posts")
+      .update(payload)
+      .eq("id", postId)
+      .select("*")
+      .single();
+    if (error) throw error;
+    return data;
+  },
+  onSuccess: (updatedPost) => {
+    queryClient.invalidateQueries({ queryKey: ["posts"] });
+    queryClient.setQueryData(["post", postId], updatedPost); // immediate UI consistency
+    toast.success("Post updated");
+  },
+  onError: (e) => {
+    console.error(e);
+    toast.error(e?.message || "Failed to update post");
+  },
+});
 
   const deleteMutation = useMutation({
     mutationFn: async (id) => {
