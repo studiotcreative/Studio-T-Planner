@@ -186,37 +186,39 @@ export default function PostEditor() {
   const acct = accounts.find((a) => a.id === selectedAccountId);
   if (!acct) throw new Error("Selected social account not found.");
 
-  // ✅ whitelist fields (IMPORTANT: do NOT include scheduled_at)
-  const payload = {
-    social_account_id: formData.social_account_id,
-    workspace_id: acct.workspace_id,
-    platform: formData.platform,
+  // ✅ whitelist fields (IMPORTANT: do NOT include scheduled_at / scheduled_tz)
+const payload = {
+  social_account_id: formData.social_account_id,
+  workspace_id: acct.workspace_id,
+  platform: formData.platform,
 
-    scheduled_date: formData.scheduled_date || null,
-    scheduled_time: formData.scheduled_time || null,
+  // Keep using legacy fields; DB trigger computes scheduled_at in America/New_York
+  scheduled_date: formData.scheduled_date || null,
+  scheduled_time: formData.scheduled_time
+    ? (formData.scheduled_time.length === 5 ? `${formData.scheduled_time}:00` : formData.scheduled_time) // "07:00" -> "07:00:00"
+    : null,
 
-    caption: formData.caption || "",
-    hashtags: formData.hashtags || "",
-    first_comment: formData.first_comment || "",
-    internal_notes: formData.internal_notes || "",
-    client_notes: formData.client_notes || "",
+  caption: formData.caption ?? "",
+  hashtags: formData.hashtags ?? "",
+  first_comment: formData.first_comment ?? "",
+  internal_notes: formData.internal_notes ?? "",
+  client_notes: formData.client_notes ?? "",
 
-    asset_urls: formData.asset_urls || [],
-    asset_types: formData.asset_types || [],
-    order_index: Number.isFinite(formData.order_index) ? formData.order_index : 0,
-  };
-
-  if (postId) {
-    // ✅ await update so button doesn't "do nothing"
-    return await updateMutation.mutateAsync(payload);
-  }
-
-  return await createMutation.mutateAsync({
-    status: "draft",
-    created_by: user.id,
-    ...payload,
-  });
+  asset_urls: Array.isArray(formData.asset_urls) ? formData.asset_urls : [],
+  asset_types: Array.isArray(formData.asset_types) ? formData.asset_types : [],
+  order_index: Number.isFinite(formData.order_index) ? formData.order_index : 0,
 };
+
+if (postId) {
+  // ✅ await update so button doesn't "do nothing"
+  return await updateMutation.mutateAsync(payload);
+}
+
+return await createMutation.mutateAsync({
+  status: "draft",
+  created_by: user.id,
+  ...payload,
+});
 
   const handleDelete = () => {
     if (!postId) return;
