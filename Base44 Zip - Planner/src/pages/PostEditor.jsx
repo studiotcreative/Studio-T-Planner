@@ -177,46 +177,47 @@ export default function PostEditor() {
   // ----------------------------
   // Save / Delete handlers
   // ----------------------------
-  const handleSave = (formData) => {
-    if (!user?.id) {
-      toast.error("You must be logged in to save.");
-      return;
-    }
+  const handleSave = async (formData) => {
+  if (!user?.id) {
+    toast.error("You must be logged in to save.");
+    return;
+  }
 
-    const selectedAccountId = formData?.social_account_id || null;
-    const selectedWorkspaceId = formData?.workspace_id || null;
+  const selectedAccountId = formData?.social_account_id || null;
+  const selectedWorkspaceId = formData?.workspace_id || null;
 
-    if (!selectedAccountId) {
-      toast.error("Please select a social account.");
-      return;
-    }
+  if (!selectedAccountId) {
+    toast.error("Please select a social account.");
+    return;
+  }
 
-    const acct = accounts.find((a) => a.id === selectedAccountId);
-    if (!acct) {
-      toast.error("Selected social account not found.");
-      return;
-    }
+  const acct = accounts.find((a) => a.id === selectedAccountId);
+  if (!acct) {
+    toast.error("Selected social account not found.");
+    return;
+  }
 
-    if (selectedWorkspaceId && acct.workspace_id && selectedWorkspaceId !== acct.workspace_id) {
-      toast.error("Workspace and social account do not match. Please re-select.");
-      return;
-    }
+  if (selectedWorkspaceId && acct.workspace_id && selectedWorkspaceId !== acct.workspace_id) {
+    toast.error("Workspace and social account do not match. Please re-select.");
+    return;
+  }
 
-    const payload = {
-      ...formData,
-      workspace_id: acct.workspace_id,
-    };
-
-    if (postId) {
-      updateMutation.mutate(payload);
-    } else {
-      createMutation.mutate({
-        status: "draft",
-        ...payload,
-        created_by: user.id,
-      });
-    }
+  const payload = {
+    ...formData,
+    workspace_id: acct.workspace_id,
   };
+
+  if (postId) {
+    // IMPORTANT: await and bubble errors to PostForm
+    return await updateMutation.mutateAsync(payload);
+  } else {
+    return await createMutation.mutateAsync({
+      status: "draft",
+      ...payload,
+      created_by: user.id,
+    });
+  }
+};
 
   const handleDelete = () => {
     if (!postId) return;
