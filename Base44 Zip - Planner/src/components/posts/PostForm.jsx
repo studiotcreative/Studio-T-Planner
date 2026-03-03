@@ -442,13 +442,12 @@ export default function PostForm({ post, onSave, onDelete, initialDate, isLoadin
     const { status, approval_status, approved_by, approved_at, ...safeData } = formData;
 
     try {
-      await Promise.resolve(onSave(safeData));
-      // ✅ If save succeeds, clear local draft
-      clearDraftNow();
-    } catch (err) {
-      console.error(err);
-      toast.error(err?.message || "Failed to save post.");
-    }
+  await onSave(safeData);      // <-- actually waits for DB update
+  clearDraftNow();             // <-- only clear draft after success
+} catch (err) {
+  console.error(err);
+  toast.error(err?.message || "Failed to save post.");
+}
   };
 
   const selectedAccount = accounts.find((a) => a.id === formData.social_account_id);
