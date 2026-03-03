@@ -114,26 +114,27 @@ export default function PostEditor() {
   });
 
   const updateMutation = useMutation({
-  mutationFn: async (payload) => {
-    const { data, error } = await supabase
-      .from("posts")
-      .update(payload)
-      .eq("id", postId)
-      .select("*")
-      .single();
-    if (error) throw error;
-    return data;
-  },
-  onSuccess: (updatedPost) => {
-    queryClient.invalidateQueries({ queryKey: ["posts"] });
-    queryClient.setQueryData(["post", postId], updatedPost);
-    toast.success("Post updated");
-  },
-  onError: (e) => {
-    console.error(e);
-    toast.error(e?.message || "Failed to update post");
-  },
-});
+    mutationFn: async (payload) => {
+      if (!postId) throw new Error("Missing post id");
+      const { data, error } = await supabase
+        .from("posts")
+        .update(payload)
+        .eq("id", postId)
+        .select("*")
+        .single();
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: (updatedPost) => {
+      queryClient.invalidateQueries({ queryKey: ["posts"] });
+      queryClient.setQueryData(["post", postId], updatedPost);
+      toast.success("Post updated");
+    },
+    onError: (e) => {
+      console.error(e);
+      toast.error(e?.message || "Failed to update post");
+    },
+  });
 
   const deleteMutation = useMutation({
     mutationFn: async (id) => {
@@ -152,7 +153,7 @@ export default function PostEditor() {
     },
   });
 
-  // ✅ Team status mutation (DB-enforced)
+  // ✅ Team status mutation (DB-enforced via RPC)
   const statusMutation = useMutation({
     mutationFn: async (nextStatus) => {
       if (!postId) throw new Error("Missing post id");
@@ -161,11 +162,11 @@ export default function PostEditor() {
         p_next_status: nextStatus,
       });
       if (error) throw error;
-      return data;
+      return data; // now returns the updated post row
     },
-    onSuccess: () => {
+    onSuccess: (updatedPost) => {
       queryClient.invalidateQueries({ queryKey: ["posts"] });
-      queryClient.invalidateQueries({ queryKey: ["post", postId] });
+      if (postId) queryClient.setQueryData(["post", postId], updatedPost);
       toast.success("Status updated");
     },
     onError: (e) => {
@@ -178,47 +179,49 @@ export default function PostEditor() {
   // Save / Delete handlers
   // ----------------------------
   const handleSave = async (formData) => {
-  if (!user?.id) throw new Error("You must be logged in to save.");
+    if (!user?.id) throw new Error("You must be logged in to save.");
 
-  const selectedAccountId = formData?.social_account_id || null;
-  if (!selectedAccountId) throw new Error("Please select a social account.");
+    const selectedAccountId = formData?.social_account_id || null;
+    if (!selectedAccountId) throw new Error("Please select a social account.");
 
-  const acct = accounts.find((a) => a.id === selectedAccountId);
-  if (!acct) throw new Error("Selected social account not found.");
+    const acct = accounts.find((a) => a.id === selectedAccountId);
+    if (!acct) throw new Error("Selected social account not found.");
 
-  // ✅ whitelist fields (IMPORTANT: do NOT include scheduled_at / scheduled_tz)
-const payload = {
-  social_account_id: formData.social_account_id,
-  workspace_id: acct.workspace_id,
-  platform: formData.platform,
+    // ✅ whitelist fields (IMPORTANT: do NOT include scheduled_at / scheduled_tz / status)
+    const payload = {
+      social_account_id: formData.social_account_id,
+      workspace_id: acct.workspace_id,
+      platform: formData.platform,
 
-  // Keep using legacy fields; DB trigger computes scheduled_at in America/New_York
-  scheduled_date: formData.scheduled_date || null,
-  scheduled_time: formData.scheduled_time
-    ? (formData.scheduled_time.length === 5 ? `${formData.scheduled_time}:00` : formData.scheduled_time) // "07:00" -> "07:00:00"
-    : null,
+      // Use legacy fields; DB trigger computes scheduled_at (NY)
+      scheduled_date: formData.scheduled_date || null,
+      scheduled_time: formData.scheduled_time
+        ? (formData.scheduled_time.length === 5
+            ? `${formData.scheduled_time}:00`
+            : formData.scheduled_time)
+        : null,
 
-  caption: formData.caption ?? "",
-  hashtags: formData.hashtags ?? "",
-  first_comment: formData.first_comment ?? "",
-  internal_notes: formData.internal_notes ?? "",
-  client_notes: formData.client_notes ?? "",
+      caption: formData.caption ?? "",
+      hashtags: formData.hashtags ?? "",
+      first_comment: formData.first_comment ?? "",
+      internal_notes: formData.internal_notes ?? "",
+      client_notes: formData.client_notes ?? "",
 
-  asset_urls: Array.isArray(formData.asset_urls) ? formData.asset_urls : [],
-  asset_types: Array.isArray(formData.asset_types) ? formData.asset_types : [],
-  order_index: Number.isFinite(formData.order_index) ? formData.order_index : 0,
-};
+      asset_urls: Array.isArray(formData.asset_urls) ? formData.asset_urls : [],
+      asset_types: Array.isArray(formData.asset_types) ? formData.asset_types : [],
+      order_index: Number.isFinite(formData.order_index) ? formData.order_index : 0,
+    };
 
-if (postId) {
-  // ✅ await update so button doesn't "do nothing"
-  return await updateMutation.mutateAsync(payload);
-}
+    if (postId) {
+      return await updateMutation.mutateAsync(payload);
+    }
 
-return await createMutation.mutateAsync({
-  status: "draft",
-  created_by: user.id,
-  ...payload,
-});
+    return await createMutation.mutateAsync({
+      status: "draft",
+      created_by: user.id,
+      ...payload,
+    });
+  };
 
   const handleDelete = () => {
     if (!postId) return;
@@ -421,7 +424,9 @@ return await createMutation.mutateAsync({
             </div>
           )}
 
-          {postId && <PostComments postId={postId} workspaceId={post?.workspace_id} />}
+          {postId && (
+            <PostComments postId={postId} workspaceId={post?.workspace_id} />
+          )}
         </div>
       </div>
     </div>
