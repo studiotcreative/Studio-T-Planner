@@ -168,7 +168,7 @@ export default function PostForm({ post, onSave, onDelete, initialDate, isLoadin
         workspace_id: post.workspace_id || "",
         platform: post.platform || "",
         scheduled_date: post.scheduled_date || "",
-        scheduled_time: post.scheduled_time || "",
+        scheduled_time: post.scheduled_time ? post.scheduled_time.slice(0, 5) : "",
         caption: post.caption || "",
         hashtags: post.hashtags || "",
         first_comment: post.first_comment || "",
