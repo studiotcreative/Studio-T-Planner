@@ -178,45 +178,44 @@ export default function PostEditor() {
   // Save / Delete handlers
   // ----------------------------
   const handleSave = async (formData) => {
-  if (!user?.id) {
-    toast.error("You must be logged in to save.");
-    return;
-  }
+  if (!user?.id) throw new Error("You must be logged in to save.");
 
   const selectedAccountId = formData?.social_account_id || null;
-  const selectedWorkspaceId = formData?.workspace_id || null;
-
-  if (!selectedAccountId) {
-    toast.error("Please select a social account.");
-    return;
-  }
+  if (!selectedAccountId) throw new Error("Please select a social account.");
 
   const acct = accounts.find((a) => a.id === selectedAccountId);
-  if (!acct) {
-    toast.error("Selected social account not found.");
-    return;
-  }
+  if (!acct) throw new Error("Selected social account not found.");
 
-  if (selectedWorkspaceId && acct.workspace_id && selectedWorkspaceId !== acct.workspace_id) {
-    toast.error("Workspace and social account do not match. Please re-select.");
-    return;
-  }
-
+  // ✅ whitelist fields (IMPORTANT: do NOT include scheduled_at)
   const payload = {
-    ...formData,
+    social_account_id: formData.social_account_id,
     workspace_id: acct.workspace_id,
+    platform: formData.platform,
+
+    scheduled_date: formData.scheduled_date || null,
+    scheduled_time: formData.scheduled_time || null,
+
+    caption: formData.caption || "",
+    hashtags: formData.hashtags || "",
+    first_comment: formData.first_comment || "",
+    internal_notes: formData.internal_notes || "",
+    client_notes: formData.client_notes || "",
+
+    asset_urls: formData.asset_urls || [],
+    asset_types: formData.asset_types || [],
+    order_index: Number.isFinite(formData.order_index) ? formData.order_index : 0,
   };
 
   if (postId) {
-    // IMPORTANT: await and bubble errors to PostForm
+    // ✅ await update so button doesn't "do nothing"
     return await updateMutation.mutateAsync(payload);
-  } else {
-    return await createMutation.mutateAsync({
-      status: "draft",
-      ...payload,
-      created_by: user.id,
-    });
   }
+
+  return await createMutation.mutateAsync({
+    status: "draft",
+    created_by: user.id,
+    ...payload,
+  });
 };
 
   const handleDelete = () => {
