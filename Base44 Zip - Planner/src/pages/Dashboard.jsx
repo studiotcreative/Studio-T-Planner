@@ -55,13 +55,14 @@ export default function Dashboard() {
     }
   });
 
-  const { data: allPosts = [], isLoading: loadingPosts } = useQuery({
+    const { data: allPosts = [], isLoading: loadingPosts } = useQuery({
     queryKey: ['posts'],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('posts')
         .select('*')
-        .order('scheduled_date', { ascending: false });
+-       .order('scheduled_date', { ascending: false });
++       .order('scheduled_at', { ascending: false, nullsFirst: false });
       if (error) throw error;
       return data ?? [];
     }
