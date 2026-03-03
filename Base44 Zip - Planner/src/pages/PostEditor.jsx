@@ -155,25 +155,25 @@ export default function PostEditor() {
 
   // ✅ Team status mutation (DB-enforced via RPC)
   const statusMutation = useMutation({
-    mutationFn: async (nextStatus) => {
-      if (!postId) throw new Error("Missing post id");
-      const { data, error } = await supabase.rpc("rpc_set_post_status", {
-        p_post_id: postId,
-        p_next_status: nextStatus,
-      });
-      if (error) throw error;
-      return data; // now returns the updated post row
-    },
-    onSuccess: (updatedPost) => {
-      queryClient.invalidateQueries({ queryKey: ["posts"] });
-      if (postId) queryClient.setQueryData(["post", postId], updatedPost);
-      toast.success("Status updated");
-    },
-    onError: (e) => {
-      console.error(e);
-      toast.error(e?.message || "Failed to update status");
-    },
-  });
+  mutationFn: async (nextStatus) => {
+    if (!postId) throw new Error("Missing post id");
+    const { data, error } = await supabase.rpc("rpc_set_post_status", {
+      p_post_id: postId,
+      p_next_status: nextStatus,
+    });
+    if (error) throw error;
+    return data; // updated post row
+  },
+  onSuccess: (updatedPost) => {
+    queryClient.invalidateQueries({ queryKey: ["posts"] });
+    queryClient.setQueryData(["post", postId], updatedPost); // ✅ immediate UI update
+    toast.success("Status updated");
+  },
+  onError: (e) => {
+    console.error(e);
+    toast.error(e?.message || "Failed to update status");
+  },
+});
 
   // ----------------------------
   // Save / Delete handlers
