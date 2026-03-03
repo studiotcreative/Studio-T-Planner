@@ -5,7 +5,7 @@ import { createPageUrl } from '@/utils';
 import { supabase } from '@/api/supabaseClient';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/components/auth/AuthProvider';
-import { format, isToday, isTomorrow, parseISO, startOfWeek, endOfWeek } from 'date-fns';
+import { startOfWeek, endOfWeek } from 'date-fns';
 import {
   Calendar,
   Plus,
@@ -26,6 +26,20 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import StatusBadge from '@/components/ui/StatusBadge';
 import PlatformIcon from '@/components/ui/PlatformIcon';
+
+const NY_TZ = "America/New_York";
+
+// YYYY-MM-DD in NY timezone
+const nyDateKey = (iso) => {
+  if (!iso) return null;
+  return new Intl.DateTimeFormat("en-CA", { timeZone: NY_TZ }).format(new Date(iso));
+};
+
+const todayNyKey = () =>
+  new Intl.DateTimeFormat("en-CA", { timeZone: NY_TZ }).format(new Date());
+
+const tomorrowNyKey = () =>
+  new Intl.DateTimeFormat("en-CA", { timeZone: NY_TZ }).format(new Date(Date.now() + 86400000));
 
 export default function Dashboard() {
   const { user, isAdmin, assignedAccounts } = useAuth();
@@ -55,14 +69,13 @@ export default function Dashboard() {
     }
   });
 
-    const { data: allPosts = [], isLoading: loadingPosts } = useQuery({
+  const { data: allPosts = [], isLoading: loadingPosts } = useQuery({
     queryKey: ['posts'],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('posts')
         .select('*')
--       .order('scheduled_date', { ascending: false });
-+       .order('scheduled_at', { ascending: false, nullsFirst: false });
+        .order('scheduled_at', { ascending: false, nullsFirst: false });
       if (error) throw error;
       return data ?? [];
     }
@@ -103,12 +116,12 @@ export default function Dashboard() {
     return {
       total: posts.length,
       draft: posts.filter(p => p.status === 'draft').length,
-      awaitingApproval: posts.filter(p => p.status === 'sent_to_client').length,
-      approved: posts.filter(p => p.status === 'approved' || p.status === 'ready_to_post').length,
+      awaitingApproval: posts.filter(p => p.status === 'wait_for_approval').length,
+      approved: posts.filter(p => p.status === 'ready_to_post').length,
       thisWeek: posts.filter(p => {
-        if (!p.scheduled_date) return false;
-        const date = parseISO(p.scheduled_date);
-        return date >= weekStart && date <= weekEnd;
+        if (!p.scheduled_at) return false;
+        const dt = new Date(p.scheduled_at);
+        return dt >= weekStart && dt <= weekEnd;
       }).length
     };
   }, [posts]);
@@ -116,26 +129,42 @@ export default function Dashboard() {
   const upcomingPosts = useMemo(() => {
     const now = new Date();
     return posts
-      .filter(p => p.scheduled_date && parseISO(p.scheduled_date) >= now && p.status !== 'posted')
-      .sort((a, b) => parseISO(a.scheduled_date) - parseISO(b.scheduled_date))
+      .filter(p => p.scheduled_at && new Date(p.scheduled_at) >= now && p.status !== 'completed')
+      .sort((a, b) => new Date(a.scheduled_at) - new Date(b.scheduled_at))
       .slice(0, 8);
   }, [posts]);
 
   const needsAttention = useMemo(() => {
     return posts
-      .filter(p => p.status === 'sent_to_client' || p.status === 'internal_review')
+      .filter(p => p.status === 'wait_for_approval' || p.status === 'changes_requested' || p.status === 'internal_review')
       .slice(0, 5);
   }, [posts]);
 
   const getAccountById = (id) => accounts.find(a => a.id === id);
   const getWorkspaceById = (id) => workspaces.find(w => w.id === id);
 
-  const formatScheduledDate = (dateStr) => {
-    if (!dateStr) return 'Unscheduled';
-    const date = parseISO(dateStr);
-    if (isToday(date)) return 'Today';
-    if (isTomorrow(date)) return 'Tomorrow';
-    return format(date, 'MMM d');
+  const formatScheduledDate = (scheduledAt) => {
+    if (!scheduledAt) return 'Unscheduled';
+    const key = nyDateKey(scheduledAt);
+    if (!key) return 'Unscheduled';
+
+    if (key === todayNyKey()) return 'Today';
+    if (key === tomorrowNyKey()) return 'Tomorrow';
+
+    return new Intl.DateTimeFormat("en-US", {
+      timeZone: NY_TZ,
+      month: "short",
+      day: "numeric",
+    }).format(new Date(scheduledAt));
+  };
+
+  const formatScheduledTime = (scheduledAt) => {
+    if (!scheduledAt) return null;
+    return new Intl.DateTimeFormat("en-US", {
+      timeZone: NY_TZ,
+      hour: "numeric",
+      minute: "2-digit",
+    }).format(new Date(scheduledAt));
   };
 
   const isLoading = loadingWorkspaces || loadingAccounts || loadingPosts;
@@ -306,6 +335,7 @@ export default function Dashboard() {
                   {upcomingPosts.map(post => {
                     const account = getAccountById(post.social_account_id);
                     const workspace = getWorkspaceById(post.workspace_id);
+                    const timeStr = formatScheduledTime(post.scheduled_at);
 
                     return (
                       <Link
@@ -351,9 +381,9 @@ export default function Dashboard() {
                         {/* Date & Status */}
                         <div className="shrink-0 flex flex-col items-end gap-2">
                           <span className="text-sm font-medium text-slate-700 whitespace-nowrap">
-                            {formatScheduledDate(post.scheduled_date)}
-                            {post.scheduled_time && (
-                              <span className="text-slate-400 ml-1">{post.scheduled_time}</span>
+                            {formatScheduledDate(post.scheduled_at)}
+                            {timeStr && (
+                              <span className="text-slate-400 ml-1">{timeStr}</span>
                             )}
                           </span>
                           <StatusBadge status={post.status} size="sm" />
@@ -435,7 +465,7 @@ export default function Dashboard() {
                   {accounts.slice(0, 6).map(account => {
                     const accountPosts = posts.filter(p => p.social_account_id === account.id);
                     const pendingCount = accountPosts.filter(p =>
-                      p.status !== 'posted' && p.status !== 'draft'
+                      p.status !== 'completed' && p.status !== 'draft'
                     ).length;
 
                     return (
@@ -464,4 +494,3 @@ export default function Dashboard() {
     </div>
   );
 }
-
